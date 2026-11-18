@@ -13,7 +13,10 @@ datalogs
 os detection (wip)
 customize color tab 
 kiwi/mimiatz
-
+settings tab
+sqlite db option
+saved hmac via json
+fixed (path scanning)
 ## modules:
 Recon 
 Privesc

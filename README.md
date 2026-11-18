@@ -10,9 +10,8 @@ shell payload injection {powershell(win) shll/bash{linux}
 builder
 map (WIP)
 datalogs
-color themes (wip some working)
 os detection (wip)
-
+customize color tab 
 kiwi/mimiatz
 
 ## modules:

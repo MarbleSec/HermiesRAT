@@ -5,7 +5,7 @@ features
 Screenshot
 Camera
 Shell Access
-file access / controller (WIP)
+file access / controller
 Simple Task Quick Commands
 shell payload injection {powershell(win) shll/bash{linux}
 builder

@@ -5,23 +5,26 @@ features
 Screenshot
 Camera
 Shell Access
+file access / controller (WIP)
 Simple Task Quick Commands
 shell payload injection {powershell(win) shll/bash{linux}
 builder
 map (WIP)
 datalogs
-os detection (wip)
+os detection
 customize color tab 
 kiwi/mimiatz
 settings tab
 sqlite db option
 saved hmac via json
 fixed (path scanning)
+mic listener (coming soon)
 ## modules:
 Recon 
 Privesc
 Proccess/taskkill
 registry
+troll commands
 ]
 
 

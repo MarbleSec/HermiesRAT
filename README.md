@@ -21,7 +21,7 @@ So Yeah Uhm Im Working On Making It Cleaner Easy To Read Whilst Keeping It Usabl
 | Shell Access | Interactive remote shell | ✅ |
 | File Browser | Browse, upload, and download files | ✅ |
 | Quick Commands | One-click task shortcuts | ✅ |
-| Payload Injection | Inject payloads through `powershell` (Windows) or `sh` / `bash` (Linux) | ✅ |
+| Payload Injection | aka ScriptsTAB | Inject payloads through `powershell` (Windows) or `sh` / `bash` (Linux) |  🚧 in progress  Needs Update|
 | Builder | Generate and configure payloads | ✅ |
 | OS Detection | Automatic target OS fingerprinting | ✅ |
 | Data Logs | Session and command history | ✅ |
@@ -31,8 +31,8 @@ So Yeah Uhm Im Working On Making It Cleaner Easy To Read Whilst Keeping It Usabl
 | SQLite DB | Optional persistent storage backend | ✅ |
 | HMAC via JSON | Saved HMAC keys stored as JSON | ✅ |
 | Path Scanning | Fixed path-scanning logic | ✅ |
-| Map | Network / host map view | 🚧 WIP |
-| Mic Listener | Remote microphone capture | 🔜 Coming soon |
+| Map | Network / host map view | ✅ |
+| Mic Listener | Remote microphone capture |  🚧 in progress  |
 
 **Legend:** ✅ implemented · 🚧 in progress · 🔜 planned
 

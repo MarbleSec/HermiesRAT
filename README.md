@@ -36,6 +36,9 @@ So Yeah Uhm Im Working On Making It Cleaner Easy To Read Whilst Keeping It Usabl
 
 **Legend:** ✅ implemented · 🚧 in progress · 🔜 planned
 
+
+MIC LISTENER-
+[NOT WORKING]
 ---
 
 ## Modules

@@ -73,3 +73,9 @@ MIC LISTENER-
 >
 > MarbleSec accepts no responsibility or liability for how this software is used or
 > operated, and it is provided **without warranty of any kind**, express or implied.
+---
+
+# USAGE DOWNLOAD
+mkdir HermiesRAT-Beta
+chmod +x run.sh     *makes venv downloads and runs*
+

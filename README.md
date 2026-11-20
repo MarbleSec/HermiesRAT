@@ -5,7 +5,7 @@
 HermiesRAT is a Python-based RAT built for authorized testing and pentesting
 
 
-> **Status:** Active development. Public release targeted for **December** at the latest.
+> **Status:** Active development. Public STABLE release targeted for **MID December** at the latest.
 
 This Is Almost 4200 Lines And Packed Into A Single File The Code Is Messy And Held Together By Superglue And Silly String....
 But It Works Despite The Messy Code

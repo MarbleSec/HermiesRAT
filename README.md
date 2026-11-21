@@ -32,9 +32,9 @@ So Yeah Uhm Im Working On Making It Cleaner Easy To Read Whilst Keeping It Usabl
 | HMAC via JSON | Saved HMAC keys stored as JSON | ✅ |
 | Path Scanning | Fixed path-scanning logic | ✅ |
 | Map | Network / host map view | ✅ |
-| Mic Listener | Remote microphone capture |  🚧 WIP  |
+| Mic Listener | Remote microphone capture |  ❓  |
 
-**Legend:** ✅ implemented · 🚧 in progress · ❌  Broken · ❎ Working Sometimes · ⛔ Possible Break · 🔜 planned 
+**Legend:** ✅ implemented · 🚧 in progress · ❌  Broken · ❎ Working Sometimes · ⛔ Possible Break · ❓ Non Tested · 🔜 planned 
 
 
 MIC LISTENER-

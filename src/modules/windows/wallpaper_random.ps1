@@ -1,0 +1,1 @@
+$img=(Get-ChildItem 'C:\Windows\Web\Wallpaper' -Recurse -Include *.jpg,*.png|Get-Random).FullName;Add-Type -TypeDefinition 'using System.Runtime.InteropServices;public class WP{[DllImport("user32.dll")]public static extern int SystemParametersInfo(int u,int w,string p,int f);}' -EA SilentlyContinue;[WP]::SystemParametersInfo(20,0,$img,3)

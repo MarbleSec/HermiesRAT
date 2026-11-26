@@ -1,0 +1,1 @@
+$sig='[DllImport("user32.dll")]public static extern int SendMessage(int h,int m,int w,int l);';Add-Type -MemberDefinition $sig -Name SM -Namespace W -EA SilentlyContinue;[W.SM]::SendMessage(0xFFFF,0x0112,0xF170,2)

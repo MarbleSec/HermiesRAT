@@ -1,0 +1,1 @@
+Add-Type -TypeDefinition 'using System.Runtime.InteropServices;public class WPR{[DllImport("user32.dll")]public static extern int SystemParametersInfo(int u,int w,string p,int f);}' -EA SilentlyContinue;while($true){$i=(Get-ChildItem 'C:\Windows\Web\Wallpaper' -Recurse -Include *.jpg,*.png|Get-Random).FullName;[WPR]::SystemParametersInfo(20,0,$i,3);Start-Sleep 10}

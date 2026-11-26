@@ -1,0 +1,1 @@
+$sig='[DllImport("user32.dll")]public static extern bool SwapMouseButton(bool b);';Add-Type -MemberDefinition $sig -Name M -Namespace W -ErrorAction SilentlyContinue;[W.M]::SwapMouseButton($false)|Out-Null

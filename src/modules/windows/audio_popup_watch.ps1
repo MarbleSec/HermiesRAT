@@ -1,0 +1,1 @@
+Add-Type -AssemblyName System.Windows.Forms;1..10|%{[System.Windows.Forms.MessageBox]::Show('Hello. I have been watching you.','...',[System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Warning)|Out-Null}

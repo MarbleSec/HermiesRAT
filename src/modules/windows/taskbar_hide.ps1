@@ -1,0 +1,1 @@
+$sig='[DllImport("user32.dll")]public static extern IntPtr FindWindow(string c,string t);[DllImport("user32.dll")]public static extern bool ShowWindow(IntPtr h,int n);';Add-Type -MemberDefinition $sig -Name TW -Namespace W -ErrorAction SilentlyContinue;$h=[W.TW]::FindWindow('Shell_TrayWnd',$null);[W.TW]::ShowWindow($h,0)

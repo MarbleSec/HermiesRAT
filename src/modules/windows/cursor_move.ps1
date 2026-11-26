@@ -1,0 +1,1 @@
+$sig='[DllImport("user32.dll")]public static extern bool SetCursorPos(int x,int y);';Add-Type -MemberDefinition $sig -Name C -Namespace W -ErrorAction SilentlyContinue;1..100|%{[W.C]::SetCursorPos((Get-Random -Max 1920),(Get-Random -Max 1080));Start-Sleep -Milliseconds 100}
